@@ -18,6 +18,11 @@
 #   evidence:      G-xx 指规划文档附录 G 的编号；其余给出 URL；括号注明阅读程度。
 # 单位陷阱（已实测）：valuation_daily.MktCap 与 prices_daily.MktCap 单位为百万円，financial_statements 金额为円；
 #   prices_daily.MktCap 含库存股，valuation_daily.MktCap 不含；FwdROE、ROE、EqAR 是小数不是百分比。
+# 预想字段陷阱（已实测）：FY 决算行的 FOP、FOdP、FNP、FEPS、FDivAnn 填写率都是 0%，预想在 Nx 字段里
+#   （NxFOP 87%、NxFOdP 83%、NxFNp 91%、NxFEPS 89%、NxFDivAnn 90%；注意 NxFNp 是小写 p）。
+#   公式中的 fc(x) 指：最新财务文档是 FY 行时取对应 Nx 字段，是 1Q、2Q、3Q 行时取 F 字段；此后的修订文档
+#   （EarnForecastRevision、DividendForecastRevision）只覆盖它有值的字段，其余字段逐字段向前延续。
+#   FOP_initial 指上一财年 FY 行的 NxFOP。
 version: "0.1.0"
 as_of: "2026-11-07"
 changelog:
@@ -159,8 +164,8 @@ metrics:
     plain_zh: "把卖资产、减损这类一次性影响去掉后，再看股价相当于几年的利润。"
     purpose: undervaluation
     direction: lower_better
-    formula: "C / [FOdP*(1-0.32) / (ShOutFY-TrShFY)]；0.32 为实测常态税负近似。IFRS 无 FOdP 时回退 FEPS 并标低置信。"
-    data_needed: "financial_statements.FOdP, ShOutFY, TrShFY；prices_daily.C"
+    formula: "C / [fc(FOdP)*(1-0.32) / (ShOutFY-TrShFY)]；0.32 为实测常态税负近似。IFRS 无 FOdP 时回退 fc(FEPS) 并标低置信。"
+    data_needed: "financial_statements.FOdP, NxFOdP, FEPS, NxFEPS, ShOutFY, TrShFY；prices_daily.C"
     available_on_free_plan: true
     free_plan_note: "IFRS 286 家 FOdP 100% 为空。"
     stale_on_free: false
@@ -179,7 +184,7 @@ metrics:
     plain_zh: "公司预计的主业利润相对市值有多高，不受一次性损益和税率干扰。"
     purpose: undervaluation
     direction: higher_better
-    formula: "FOP（FY 行用 NxFOP）/ (valuation_daily.MktCap * 1e6)"
+    formula: "fc(FOP) / (valuation_daily.MktCap * 1e6)"
     data_needed: "financial_statements.FOP, NxFOP；valuation_daily.MktCap"
     available_on_free_plan: true
     free_plan_note: "非金融有文档者覆盖 Prime 95%、Standard 96%、Growth 88%。"
@@ -380,7 +385,7 @@ metrics:
     plain_zh: "按公司预告的分红，每年能拿回股价的百分之几。"
     purpose: undervaluation
     direction: higher_better
-    formula: "FDivAnn（FY 行用 NxFDivAnn）/ C。0 表示不分红，算未命中；空表示未定，算未知，不得把空当 0。"
+    formula: "fc(FDivAnn) / C。0 表示不分红，算未命中；空表示未定，算未知，不得把空当 0。"
     data_needed: "financial_statements.FDivAnn, NxFDivAnn；prices_daily.C"
     available_on_free_plan: true
     free_plan_note: "读取时已知 Prime 92%、Standard 91%、Growth 93%；预告零分红 Prime 2%、Standard 10%、Growth 58%。記念配当从字段看不出来，需 TDnet 文本。"
@@ -722,8 +727,8 @@ metrics:
     plain_zh: "公司预计今年主业利润比上一年增长多少。"
     purpose: growth
     direction: higher_better
-    formula: "FOP / OP_FY(prev) − 1（OP_FY(prev)>0）"
-    data_needed: "financial_statements.FOP, OP（FY 行）"
+    formula: "fc(FOP) / OP_FY(prev) − 1（OP_FY(prev)>0）"
+    data_needed: "financial_statements.FOP, NxFOP, OP（FY 行）"
     available_on_free_plan: true
     free_plan_note: "FOP 非金融覆盖约 88-96%，但 3 月决算公司的 FY 行尚未回填。"
     stale_on_free: false
