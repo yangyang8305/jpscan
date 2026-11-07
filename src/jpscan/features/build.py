@@ -625,13 +625,13 @@ def add_rev_1m(d: pd.DataFrame, states: pd.DataFrame, adj_events: pd.DataFrame |
         safe_k = np.where(k >= 0, k, 0)
         with np.errstate(invalid="ignore"):
             hit = (v <= th) & (near[safe_k, c_cols] <= t_rows) & (k >= 0)
-        res[w] = (hit, safe_k)
-    hit21, k21 = res[wait21]
-    hit60, _ = res[wait60]
+        res[w] = (hit, v, safe_k)
+    hit21, _, k21 = res[wait21]
+    hit60 = res[wait60][0]
     d["cause_proxy_earnings"] = hit21[idx_r, idx_c]
     d["cause_proxy_date"] = dates[k21[idx_r, idx_c]]
     d["cause_proxy_earnings_60"] = hit60[idx_r, idx_c]
-    d["cause_worst_rel_ret"] = worst_day_in_window(rel, window)[1][idx_r, idx_c]
+    d["cause_worst_rel_ret"] = (res[wait21][1] if window == wait21 else worst_day_in_window(rel, window)[1])[idx_r, idx_c]
     return d
 
 
@@ -674,7 +674,7 @@ def add_self_history(d: pd.DataFrame, val: pd.DataFrame, dates: pd.DatetimeIndex
 KEEP_DROP = {
     "O", "H", "L", "adj_vo", "rem_fc", "rem_ytd", "rem_prev_fy", "rem_prev_ytd", "cfi_fy0", "fy_eff_fy0", "fy_eff_fy1", "tr_mixed", "shares_eff", "bps_eff", "f_eps_eff", "f_div_eff",
     "EPS", "FwdEPS", "BPS_val", "ROE", "FwdROE", "PER", "FwdPER", "PBR", "MktCap_val", "doc_kind_last_stmt_is_fy", "cash_eff", "doc_kind", "DocType", "cur_per_type", "cur_fy_end",
-    "net_shares_fy0", "net_shares_fy1", "sales_fy2", "op_fy2", "ta_fy1", "np_fy1", "cfo_fy1", "avg_shares", "is_revision_doc", "chg_acc_est", "fy_end_fy3", "cum_after", "S17",
+    "net_shares_fy0", "net_shares_fy1", "sales_fy2", "op_fy2", "ta_fy1", "np_fy1", "cfo_fy1", "avg_shares", "is_revision_doc", "chg_acc_est", "fy_end_fy3", "cum_after",
     "sales_ttm", "cfo_ttm", "np_ttm", "op_ytd", "f_sales", "f_payout", "f_div_2q", "f_div_fy", "eps_fy0", "div_ps_today", "earnings_yield_fwd", "adv120_turnover", "sheq_latest",
     "consolidated", "f_op_initial", "ed_period_end", "ed_cash", "short_term_securities", "dep_annual", "interest_annual", "ma25_slope20", "ma75_slope20", "shares_net", "adj_ps",
 }
@@ -814,7 +814,10 @@ def write_features(store, feat: pd.DataFrame) -> None:
         if str(p) in old_parts:
             old = store.read("mart", "features_daily", partitions=[str(p)])
             if "metric_version" in old.columns:
-                old = old[old["metric_version"] == version]
+                stale = old["metric_version"] != version
+                if stale.any():
+                    log.warning("分区 %s 有 %d 行是旧口径 %s，已丢弃；要补回这些日期请用更早的 --from 重算", p, int(stale.sum()), old.loc[stale, "metric_version"].iloc[0])
+                old = old[~stale]
             if not old.empty:
                 keep_dates = ~pd.to_datetime(old["Date"]).isin(pd.to_datetime(sub["Date"]).unique())
                 old = old[keep_dates]
