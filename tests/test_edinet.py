@@ -16,7 +16,7 @@ import requests
 
 from jpscan.connectors.edinet import (EdinetAuthError, EdinetClient, EdinetError, EdinetKeyMissing, EdinetNotFound,
                                       doc_kind, normalize_sec_code, parse_code_list)
-from jpscan.connectors.edinet_csv import decode_csv_bytes, parse_csv_bytes, parse_financial_csv_zip, to_number
+from jpscan.connectors.edinet_csv import decode_csv_bytes, extract_key_items, parse_csv_bytes, parse_financial_csv_zip, to_number
 from jpscan.ledger import Ledger
 from jpscan.paths import DataPaths
 from jpscan.store import Store
@@ -420,6 +420,76 @@ def test_parse_zip_without_folder_falls_back_and_empty_zip(tmp_path):
     p = tmp_path / "S100TST3_5.zip"
     p.write_bytes(buf.getvalue())
     assert parse_financial_csv_zip(p).empty
+
+
+# ---------------- 关键科目 ----------------
+def key_items_from(rows, tmp_path=None, code="99990"):
+    df = parse_csv_bytes(tsv_bytes(rows), "S100TST1", "f.csv")
+    df["Code"] = code
+    df["period_end"] = date(2026, 3, 31)
+    df["submit_date"] = date(2026, 6, 26)
+    return extract_key_items(df)
+
+
+def test_extract_key_items_mapping_and_priority():
+    items = key_items_from(FIN_ROWS)
+    assert list(items.columns) == ["Code", "period_end", "disc_date", "consolidated", "item", "value", "docID"]
+    cons = items[items["consolidated"]].set_index("item")["value"]
+    assert cons["net_sales"] == 1000000.0                  # jppfs 优先于 jpcrp 摘要；不取前期与个别
+    assert cons["operating_income"] == 120000.0
+    assert cons["interest_expense"] == 3000.0
+    assert cons["depreciation"] == 50000.0
+    assert cons["capex"] == -70000.0                       # 符号保持原文件
+    assert cons["cash_and_deposits"] == 200000.0
+    assert cons["short_term_securities"] == 0.0            # 「-」= 0
+    assert cons["long_term_loans"] == 8000.0               # 不取 Prior1YearInstant 的 7777
+    assert cons["interest_bearing_debt"] == 1000 + 2000 + 4000 + 8000 + 16000
+    assert cons["receivables_trade"] == 30000.0            # 缺合计，用构成项相加
+    assert cons["inventories"] == 7000.0
+    single = items[~items["consolidated"]].set_index("item")["value"]
+    assert single.to_dict() == {"net_sales": 400000.0}
+    row = items.iloc[0]
+    assert row["Code"] == "99990" and row["period_end"] == date(2026, 3, 31) and row["disc_date"] == date(2026, 6, 26)
+    assert row["docID"] == "S100TST1"
+    assert not items.duplicated(["docID", "consolidated", "item"]).any()
+
+
+def test_extract_key_items_reported_total_wins_over_components():
+    rows = FIN_ROWS + [["jppfs_cor:Inventories", "棚卸資産", "CurrentYearInstant", "当期末", "連結", "時点", "JPY", "円", "9000"]]
+    cons = key_items_from(rows).query("consolidated").set_index("item")["value"]
+    assert cons["inventories"] == 9000.0
+
+
+def test_extract_key_items_ifrs_uses_context_for_consolidation():
+    rows = [
+        ["jpigp_cor:RevenueIFRS", "売上収益", "CurrentYearDuration", "当期", "その他", "期間", "JPY", "円", "500"],
+        ["jpigp_cor:OperatingProfitLossIFRS", "営業利益", "CurrentYearDuration", "当期", "その他", "期間", "JPY", "円", "50"],
+        ["jpigp_cor:BorrowingsNCLIFRS", "借入金", "CurrentYearInstant", "当期末", "その他", "時点", "JPY", "円", "70"],
+        ["jpigp_cor:LeaseLiabilitiesCLIFRS", "リース負債", "CurrentYearInstant", "当期末", "その他", "時点", "JPY", "円", "7"],
+    ]
+    items = key_items_from(rows)
+    assert items["consolidated"].all()
+    cons = items.set_index("item")["value"]
+    assert cons["net_sales"] == 500 and cons["operating_income"] == 50 and cons["interest_bearing_debt"] == 77
+
+
+def test_extract_key_items_interim_contexts_and_exclusions():
+    rows = [
+        ["jppfs_cor:NetSales", "売上高", "InterimDuration", "当中間期", "連結", "期間", "JPY", "円", "60"],
+        ["jppfs_cor:CashAndDeposits", "現金及び預金", "InterimInstant", "当中間期末", "連結", "時点", "JPY", "円", "61"],
+        ["jppfs_cor:OperatingIncome", "営業利益", "CurrentQuarterDuration", "当四半期", "連結", "期間", "JPY", "円", "1"],
+        ["jppfs_cor:BondsPayable", "社債", "CurrentYearInstant_ReportableSegmentsMember", "当期末", "連結", "時点", "JPY", "円", "2"],
+    ]
+    items = key_items_from(rows)
+    assert items.set_index("item")["value"].to_dict() == {"net_sales": 60.0, "cash_and_deposits": 61.0}
+
+
+def test_extract_key_items_requires_code_and_period_and_handles_empty():
+    assert key_items_from(FIN_ROWS, code=None).empty
+    no_period = parse_csv_bytes(tsv_bytes(FIN_ROWS), "S100TST1", "f.csv").assign(Code="99990", period_end=None, submit_date=date(2026, 6, 26))
+    assert extract_key_items(no_period).empty
+    assert extract_key_items(parse_csv_bytes(tsv_bytes([]), "D", "f.csv")).empty
+    assert list(extract_key_items(None).columns)[0] == "Code"
 
 
 # ---------------- 代码表 ----------------

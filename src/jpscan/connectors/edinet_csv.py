@@ -155,3 +155,110 @@ def parse_financial_csv_zip(zip_path: Path | str, doc_id: str | None = None) -> 
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=COLUMNS)
     df.attrs["skipped_files"] = skipped
     return df
+
+
+# ---------------- 关键科目 ----------------
+# 要素名已对照 2026 年版 EDINET タクソノミ（勘定科目リスト 1f、IFRS 要素リスト 1g、要素リスト 1e，附录 G1-32）。
+# 同一科目的多个要素按优先级排列，取文件中最先命中的一个。
+ITEM_ELEMENTS: dict[str, tuple[str, ...]] = {
+    # 损益
+    "net_sales": ("jppfs_cor:NetSales", "jppfs_cor:OperatingRevenue1", "jppfs_cor:OperatingRevenue2", "jpigp_cor:RevenueIFRS",
+                  "jpigp_cor:NetSalesIFRS", "jpigp_cor:Revenue2IFRS", "jpcrp_cor:NetSalesSummaryOfBusinessResults",
+                  "jpcrp_cor:RevenueIFRSSummaryOfBusinessResults"),
+    "operating_income": ("jppfs_cor:OperatingIncome", "jpigp_cor:OperatingProfitLossIFRS"),
+    "interest_expense": ("jppfs_cor:InterestExpensesNOE", "jppfs_cor:InterestExpensesOpeCF", "jpigp_cor:InterestExpensesIFRS",
+                         "jpigp_cor:InterestExpensesOpeCFIFRS", "jpigp_cor:FinanceCostsIFRS"),
+    # 现金流（符号保持原文件：取得支出通常为负）
+    "depreciation": ("jppfs_cor:DepreciationAndAmortizationOpeCF", "jpigp_cor:DepreciationAndAmortizationOpeCFIFRS",
+                     "jpigp_cor:DepreciationExpenseOpeCFIFRS"),
+    "capex": ("jppfs_cor:PurchaseOfPropertyPlantAndEquipmentInvCF", "jpigp_cor:PurchaseOfPropertyPlantAndEquipmentInvCFIFRS"),
+    # 流动资产
+    "cash_and_deposits": ("jppfs_cor:CashAndDeposits",),
+    "cash_equivalents": ("jppfs_cor:CashAndCashEquivalents", "jpigp_cor:CashAndCashEquivalentsIFRS",
+                         "jpcrp_cor:CashAndCashEquivalentsSummaryOfBusinessResults"),
+    "short_term_securities": ("jppfs_cor:ShortTermInvestmentSecurities",),
+    "receivables_trade": ("jppfs_cor:NotesAndAccountsReceivableTrade", "jppfs_cor:NotesAndAccountsReceivableTradeAndContractAssets",
+                          "jpigp_cor:TradeAndOtherReceivablesCAIFRS"),
+    "notes_receivable_trade": ("jppfs_cor:NotesReceivableTrade",),
+    "accounts_receivable_trade": ("jppfs_cor:AccountsReceivableTrade",),
+    "inventories": ("jppfs_cor:Inventories", "jpigp_cor:InventoriesCAIFRS"),
+    "merchandise_finished_goods": ("jppfs_cor:MerchandiseAndFinishedGoods",),
+    "work_in_process": ("jppfs_cor:WorkInProcess",),
+    "raw_materials_supplies": ("jppfs_cor:RawMaterialsAndSupplies",),
+    # 有利子負債 构成项
+    "short_term_loans": ("jppfs_cor:ShortTermLoansPayable", "jpigp_cor:BorrowingsCLIFRS", "jpigp_cor:BondsAndBorrowingsCLIFRS",
+                         "jpigp_cor:InterestBearingLiabilitiesCLIFRS"),
+    "commercial_paper": ("jppfs_cor:CommercialPapersLiabilities",),
+    "current_lt_loans": ("jppfs_cor:CurrentPortionOfLongTermLoansPayable", "jpigp_cor:CurrentPortionOfLongTermBorrowingsCLIFRS"),
+    "current_bonds": ("jppfs_cor:CurrentPortionOfBonds", "jpigp_cor:BondsPayableCLIFRS"),
+    "bonds": ("jppfs_cor:BondsPayable", "jpigp_cor:BondsPayableNCLIFRS"),
+    "long_term_loans": ("jppfs_cor:LongTermLoansPayable", "jpigp_cor:BorrowingsNCLIFRS", "jpigp_cor:BondsAndBorrowingsNCLIFRS",
+                        "jpigp_cor:InterestBearingLiabilitiesNCLIFRS"),
+    "lease_cl": ("jppfs_cor:LeaseObligationsCL", "jpigp_cor:LeaseLiabilitiesCLIFRS"),
+    "lease_ncl": ("jppfs_cor:LeaseObligationsNCL", "jpigp_cor:LeaseLiabilitiesNCLIFRS"),
+}
+DEBT_COMPONENTS = ("short_term_loans", "commercial_paper", "current_lt_loans", "current_bonds", "bonds", "long_term_loans",
+                   "lease_cl", "lease_ncl")
+# 合计科目在 BS 上常被拆开列示：缺合计时用构成项相加
+FALLBACK_SUMS = {
+    "inventories": ("merchandise_finished_goods", "work_in_process", "raw_materials_supplies"),
+    "receivables_trade": ("notes_receivable_trade", "accounts_receivable_trade"),
+}
+KEY_ITEM_COLUMNS = ["Code", "period_end", "disc_date", "consolidated", "item", "value", "docID"]
+
+_ELEMENT_RANK = {el: (item, rank) for item, els in ITEM_ELEMENTS.items() for rank, el in enumerate(els)}
+# 当期值：有報 CurrentYear*，半期 Interim*，旧四半期累计 CurrentYTD 与期末 CurrentQuarterInstant。
+# 不含 Prior*（前期值）、CurrentQuarterDuration（单季）与分部等其他 Member。
+_CONTEXT_RE = re.compile(r"^(CurrentYearInstant|CurrentYearDuration|InterimInstant|InterimDuration|CurrentYTDDuration"
+                         r"|CurrentQuarterInstant)(_NonConsolidatedMember)?$")
+
+
+def extract_key_items(df: pd.DataFrame) -> pd.DataFrame:
+    """长表 → 标准科目表 edinet_key_items（只取当期值）。
+
+    df 需含 docID、element_id、context_id、numeric_value；Code、period_end、disc_date（或 submit_date）来自书类元数据，
+    由作业附加。没有 Code（非上市提交者）或没有 period_end 的行不输出。派生科目 interest_bearing_debt = DEBT_COMPONENTS 之和。
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(columns=KEY_ITEM_COLUMNS)
+    picked = df[df["element_id"].isin(list(_ELEMENT_RANK)) & df["numeric_value"].notna()]
+    picked = picked[[bool(_CONTEXT_RE.match(str(c))) for c in picked["context_id"]]]
+    disc = "disc_date" if "disc_date" in picked.columns else "submit_date"
+    out = pd.DataFrame({
+        "Code": picked["Code"] if "Code" in picked.columns else None,
+        "period_end": picked["period_end"] if "period_end" in picked.columns else None,
+        "disc_date": picked[disc] if disc in picked.columns else None,
+        "consolidated": [_is_consolidated(f, c) for f, c in zip(picked.get("consolidated_flag", [None] * len(picked)), picked["context_id"])],
+        "item": [_ELEMENT_RANK[e][0] for e in picked["element_id"]],
+        "rank": [_ELEMENT_RANK[e][1] for e in picked["element_id"]],
+        "value": picked["numeric_value"].astype("float64"),
+        "docID": picked["docID"],
+    })
+    out = out[out["Code"].notna() & out["period_end"].notna()]
+    if out.empty:
+        return pd.DataFrame(columns=KEY_ITEM_COLUMNS)
+    group = ["docID", "consolidated"]
+    out = out.sort_values("rank", kind="stable").drop_duplicates(group + ["item"], keep="first").drop(columns="rank")
+    derived: list[dict[str, Any]] = []
+    for _, g in out.groupby(group, sort=False):
+        have = dict(zip(g["item"], g["value"]))
+        base = g.iloc[0].to_dict()
+        for item, parts in FALLBACK_SUMS.items():
+            vals = [have[p] for p in parts if p in have]
+            if item not in have and vals:
+                derived.append({**base, "item": item, "value": float(sum(vals))})
+        debt = [have[p] for p in DEBT_COMPONENTS if p in have]
+        if debt:
+            derived.append({**base, "item": "interest_bearing_debt", "value": float(sum(debt))})
+    if derived:
+        out = pd.concat([out, pd.DataFrame(derived)], ignore_index=True)
+    return out[KEY_ITEM_COLUMNS].reset_index(drop=True)
+
+
+def _is_consolidated(flag: Any, context_id: str) -> bool:
+    """jppfs 看「連結・個別」列；其他要素该列为「その他」，看コンテキストID 是否带 NonConsolidatedMember。"""
+    if flag == "連結":
+        return True
+    if flag == "個別":
+        return False
+    return "NonConsolidatedMember" not in str(context_id)
