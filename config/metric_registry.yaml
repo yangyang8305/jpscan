@@ -627,17 +627,17 @@ metrics:
     plain_zh: "公司发年报时，给的明年利润预测比今年实际高多少（相对市值）。"
     purpose: catalyst_event
     direction: higher_better
-    formula: "仅 FY 决算行：(NxFOdP − OdP)/(MktCap*1e6)；IFRS、美国准则无经常利益时用 (NxFOP − OP)，并按 gaap 分组比较；有效窗口为 DiscDate 后第 2 至第 60 个交易日。FY 行的 FOP 全空，要读 NxF* 字段。"
-    data_needed: "financial_statements.NxFOP, NxFOdP, OP, OdP, gaap, DocType, CurPerType, DiscDate；valuation_daily.MktCap"
+    formula: "仅 FY 决算行，按字段回退：JP 准则有 NxFOdP、OdP 时 NxFOdP − OdP（口径 odp）；否则有 NxFOP、OP 时 NxFOP − OP（口径 op）；否则 NxFNp − NP（口径 np）；都没有记未知。除以公告前一交易日 MktCap*1e6，再减同业（peer_group）中位得 adj；在同口径内排名，口径组不足 20 只不评。排名池是过去 250 个交易日的全部 FY 行，信号有效窗口是 DiscDate 后第 2 至第 60 个交易日。FY 行的 FOP 全空，要读 Nx 字段。"
+    data_needed: "financial_statements.NxFOP, NxFOdP, NxFNp, OP, OdP, NP, gaap, DocType, CurPerType, DiscDate；valuation_daily.MktCap"
     available_on_free_plan: true
     free_plan_note: "FY 决算行 NxFOP 88%。读取时有 FY 行的只有 Prime 8%、Standard 13%、Growth 18%（3 月决算的 5 月数据大多未回填）。"
     stale_on_free: true
     unlocks_with: "回测：回填到 2025-05。实盘：J-Quants Light 以上去掉延迟；TDnet 摘要 XBRL 可免费拿到近实时的预想数字，但价格仍延迟。"
-    sector_rules: "银行用 OdP；保险、证券不适用（预想多缺失）。商社改用 NP 与 FNP。"
+    sector_rules: "银行走 odp 口径；保险、证券不适用（预想多缺失）。无 NxFOP 不只是五大商社，IFRS 公司约四分之一都没有（日本製鉄、三菱重工、豊田通商 等），所以按字段回退，不按行业写。"
     status: score
     planned_status: score
     evidence_strength: strong
-    evidence: "日本最符合制度的信号。G2-19 Jinushi 2023（全文已读，2002-2020，60124 公司年）：指引意外对公告后 +2 至 +60 日异常收益的系数在所有样本中显著为正，同期的实绩意外几乎不显著；外资高或个人低的公司漂移在减弱。G2-14：公告反应主要来自翌期预想。https://www.rieb.kobe-u.ac.jp/tjar/article/vol13/pdf/13.01.Jinushi.pdf"
+    evidence: "日本最符合制度的信号。G2-19 Jinushi 2023（全文已读，2002-2020，60124 公司年）：指引意外对公告后 +2 至 +60 日异常收益的系数在所有样本中显著为正，同期的实绩意外几乎不显著；外资高或个人低的公司漂移在减弱。G2-14：公告反应主要来自翌期预想。https://www.rieb.kobe-u.ac.jp/tjar/article/vol13/pdf/13.01.Jinushi.pdf 实测（2026-06-30，旧规则按 gaap 全市场排名）：銀行 hit 66%，電気･ガス fail 57%、海運 fail 70%，等于在押行业；减同业中位后 銀行 hit 25%，電気･ガス fail 35%、海運 fail 20%。旧的 60 日滚动排名有断崖：08-14 窗口内只剩约 350 个 FY 行，JP 组 30 分位由 −0.5% 变成 −0.04%。"
     why: "草案的 G3 用当期预想且混在成长分里。应单独成为事件信号。证据强但窗口正好落在 Free 的 12 周延迟之内，实盘须用无延迟数据。"
 
   - id: guid_revision_event
@@ -1896,7 +1896,7 @@ metrics:
 # absence_means：没有事件时算什么。no_signal 表示没有事件就是 miss；unknown 表示数据本身可能缺失。
 # hit_rules.rule：
 #   peer_best_pct    在同业（params.peer_group：S33，不足 20 只回退 S17）内排在最好的前 value 比例
-#   group_best_pct   在 group 指定的分组内排在最好的前 value 比例，窗口 window_days 个交易日
+#   group_best_pct   在 group 指定的分组内排在最好的前 value 比例；排名池 rank_pool_days 个交易日，window_days 只决定信号是否有效
 #   universe_best_pct 在全市场排在最好的前 value 比例
 #   min_value        指标值 >= value
 #   event_up_top_pct 窗口内上调事件中，幅度排在前 value 比例；变动小于 noise_floor 不算事件
@@ -1982,7 +1982,7 @@ families:
       min_known: 1
       min_hits: 1
       hit_rules:
-        - {metric: guid_forecast_innovation, rule: group_best_pct, group: gaap, value: 0.30, window_days: 60}
+        - {metric: guid_forecast_innovation, rule: group_best_pct, group: basis, value: 0.30, window_days: 60, rank_pool_days: 250, unless_gate: gate_miss_then_bullish}
         - {metric: guid_revision_event, rule: event_up_top_pct, value: 0.30, window_days: 30, noise_floor: 0.01}
     fail_rule: "30 个交易日内 guid_revision_event 下调超过 noise_floor。guid_forecast_innovation 的负值只展示，不算 fail：相对排名的最差 30% 分界只有约 −0.5% 市值，日本公司又常有保守指引，这条曾否决 2026-06-30 核心池 32% 的估值命中；指引走低本身已压低 E/P。"
     measured:
@@ -2166,7 +2166,7 @@ sector_overrides:
     traps_zh: "约 20% 无 FOP，EqAR<30% 占 40%，只有 5 只，回退 S17。"
   海運業:
     family_changes:
-      guidance_change: {use_basis: "OdP、FOdP 代替 OP、FOP"}
+      guidance_change: {use_basis: "OdP、FOdP 代替 OP、FOP；guid_forecast_innovation 已按 odp 口径"}
     gates_off: [gate_one_off]
     traps_zh: "OdP/OP 中位 1.23，FNP/FOP 中位 1.59，FwdPER<10 占 36%。OP 口径失真，低 PER 要先判断周期位置，当前算未检查。"
   卸売業:
