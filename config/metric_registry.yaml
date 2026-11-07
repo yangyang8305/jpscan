@@ -935,3 +935,224 @@ metrics:
     evidence: "实务常用，未找到日本全市场收益证据，格式不统一。"
     why: "是判断下跌是否结构性的关键，但不能合规地全市场结构化。"
 
+  # ---------- 资本行动与股东结构 ----------
+  - id: evt_buyback
+    family: capital_action
+    aliases: [BUYBACK_EVENT]
+    name_zh: "回购公告规模"
+    plain_zh: "公司宣布要花相当于市值百分之几的钱回购自家股票。"
+    purpose: catalyst_event
+    direction: higher_better
+    formula: "取得枠金额/(MktCap*1e6)；<1% 不算命中；用公告次日起的窗口评估，并按 PBR、ROE 分组。"
+    data_needed: "staging.disclosures（E05 事件及金额）；回测可用 EDINET 自己株券買付状況報告書"
+    available_on_free_plan: false
+    free_plan_note: "J-Quants Free 没有公告。滞后代理见 evt_net_share_reduction。"
+    stale_on_free: true
+    unlocks_with: "TDnet 每日采集（免费，只有最近 31 日）；历史回测用 J-Quants TDnet 附加包或 EDINET"
+    sector_rules: "金融业回购受规制资本约束，单独看。"
+    status: display
+    planned_status: score
+    evidence_strength: strong
+    evidence: "G2-22（FY2001-2025，9548 件）：CAR(−5,+30) 均值 +4.7pp，PBR<1 约 6pp，规模<1% 仅 1.2pp，每 +1pp 规模 +0.59pp。G2-23：ROE<8% 公司 3 日 CAR 更大。注意该窗口含公告前和当日，公告后买入能否获利未单独报告。"
+    why: "样本大且新，是证据最明确的催化剂，但当前数据拿不到。分值按规模连续，不是固定加分。接入 TDnet 后优先启用。"
+
+  - id: evt_dividend_change
+    family: capital_action
+    aliases: [Q9]
+    name_zh: "配当予想修正与减配"
+    plain_zh: "公司上调还是下调了分红预告。"
+    purpose: catalyst_event
+    direction: higher_better
+    formula: "ΔFDivAnn/C（分割按 AdjFactor 调整）；DocType=DividendForecastRevision 或决算文档中 FDivAnn 变化；下调不算命中，由 rev_intact_test 读取。"
+    data_needed: "financial_statements.FDivAnn, DocType；prices_daily.C, AdjFactor"
+    available_on_free_plan: true
+    free_plan_note: "1 个月约 31-47 行 DividendForecastRevision。分红修订文档的利润类 F* 全空，不可覆盖状态。"
+    stale_on_free: true
+    unlocks_with: "实盘：TDnet 每日采集；记念配当、DOE、累进政策需读文本"
+    sector_rules: "无配当公司不适用。"
+    status: score
+    planned_status: score
+    evidence_strength: moderate
+    evidence: "G2-24：DPS 上修后 CAR 为正，増配公司次年増益概率 78.7% vs 49.8%。样本偏老，未找到近年复现。"
+    why: "披露完整、数据干净，Free 可得，是 capital_action 家族现在唯一能算的一项。"
+
+  - id: evt_net_share_reduction
+    family: capital_action
+    aliases: [N10, NET_SHARE_REDUCTION]
+    name_zh: "股数净减少率"
+    plain_zh: "过去一年公司在外流通股数变少了还是变多了，不读公告也能发现回购或增发。"
+    purpose: catalyst_event
+    direction: higher_better
+    formula: "[(ShOutFY−TrShFY)(t−4Q)*累积AdjFactor − (ShOutFY−TrShFY)(t)] / 前值。短期可用 valuation_daily.MktCap*1e6/C 按 AdjFactor 调整后比较。"
+    data_needed: "financial_statements.ShOutFY, TrShFY；valuation_daily.MktCap；prices_daily.C, AdjFactor"
+    available_on_free_plan: true
+    free_plan_note: "须回填到上年同期；股数只在决算文档后才更新；TrShFY 空值约 10%。"
+    stale_on_free: false
+    unlocks_with: "回填到 2025-06"
+    sector_rules: "分割必须调整，否则会被误判。"
+    status: score
+    planned_status: display
+    evidence_strength: moderate
+    evidence: "G2-22、G2-23、G2-34。连续排序证据矛盾：McLean 等 2009 跨 41 国显著（日本分表未核实）https://ideas.repec.org/a/eee/jfinec/v94y2009i1p1-17.html ，Blackburn & Cakici 2019 称日本不显著 https://www2.mdpi.com/1911-8074/12/2/90 。实测 27 个交易日内净股数降>1% 占 5.4%，升>1% 占 2.3%。"
+    why: "是回购公告的滞后代理，只在 TDnet 缺失时计入家族，并且只用是否减少超过 1% 的判断，不作连续排序。TDnet 到位后转为展示，以免与 yield_net_payout 重复计算。"
+
+  - id: evt_capital_cost_disclosure
+    family: capital_action
+    aliases: [Q10, CAPITAL_COST_STATUS]
+    name_zh: "资本成本对应披露"
+    plain_zh: "公司有没有响应东证要求，说明怎么提高资本效率，而且有没有具体数字。"
+    purpose: catalyst_event
+    direction: none
+    formula: "jpx_capital_cost_disclosure.disclosure_status 最新月；量化目标需读文本。"
+    data_needed: "staging.jpx_capital_cost_disclosure（已入库）；TDnet 文本"
+    available_on_free_plan: true
+    free_plan_note: "最新月已披露 Prime 92.9%、Standard 54.3%、Growth 仅 1 家。PBR<1 的 Prime 公司 436 家已披露、21 家未列入。"
+    stale_on_free: false
+    unlocks_with: "量化目标：TDnet 文本"
+    sector_rules: "Prime 已接近饱和，Standard 的未披露可作负面提示。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "G1-17、G2-07；G2-08（未核实，约 +2.5%）；G2-23。披露与收益的独立因果证据有限。"
+    why: "草案的布尔加分在 Prime 已没有区分度。分析师更看重后续实际行动。"
+
+  - id: evt_index_flow
+    family: capital_action
+    aliases: [TOPIX_EVENT]
+    name_zh: "指数变动事件"
+    plain_zh: "被指数剔除或降权带来的被动卖盘可能和公司基本面无关。"
+    purpose: catalyst_event
+    direction: none
+    formula: "security_master.ScaleCat 变化；index_topix_weights 变化；JPX 公告的除外、移行措施日程。"
+    data_needed: "security_master.ScaleCat；staging.index_topix_weights；JPX 公告"
+    available_on_free_plan: true
+    free_plan_note: "权重已入库；日程需从 JPX 公告整理。"
+    stale_on_free: false
+    unlocks_with: "JPX 免费文件"
+    sector_rules: "主要影响小型股。"
+    status: display
+    planned_status: display
+    evidence_strength: moderate
+    evidence: "G2-29：采用 +1 显著，除外负效应更大但短暂。G1-18：2026-2028 分阶段改革，具体反转效应尚无事后研究。提前可知的日程会被抢先交易。"
+    why: "最有价值的用途是错杀归因，单独不足以成为买入理由。"
+
+  - id: evt_tob_mbo_watch
+    family: capital_action
+    aliases: [TOB_MBO_WATCH]
+    name_zh: "TOB 与 MBO 观察标记"
+    plain_zh: "列出资产便宜、股东集中、容易被收购或私有化的公司，但不把它当成预测。"
+    purpose: catalyst_event
+    direction: none
+    formula: "val_cash_minus_liabilities 高、残差低、创业家或母公司持股高、小市值、近期回购或下跌的标记组合；不计总分。jpx_delisted 的原因可作历史标签。"
+    data_needed: "上述指标；EDINET 大株主；TDnet TOB 公告"
+    available_on_free_plan: false
+    free_plan_note: "缺股东数据。jpx_delisted 785 条含原因（株式併合 178、売渡請求 131、買収 68、MBO 45）。"
+    stale_on_free: false
+    unlocks_with: "EDINET、TDnet；自建历史标签后才能检验"
+    sector_rules: "无。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "G2-28 只有基准率。Ito 54 件 MBO https://scholarspace.manoa.hawaii.edu/handle/10125/100971 。日本样本外预测模型未找到。"
+    why: "归入 B0。事件稀少，MBO 价格可能压低少数股东收益，MBO 前的下跌还会让标的看起来更便宜。"
+
+  - id: own_foreign_individual
+    family: capital_action
+    aliases: [OWNERSHIP_ATTENTION]
+    name_zh: "外资、个人持股比例"
+    plain_zh: "这家公司的股东主要是外资机构还是散户，这影响好坏消息被定价的速度。"
+    purpose: catalyst_event
+    direction: none
+    formula: "有報 所有者別状況：外国法人、个人、金融机构持股比；与 guid_forecast_innovation 交互展示。"
+    data_needed: "EDINET 有報"
+    available_on_free_plan: false
+    free_plan_note: "Free 无此字段。"
+    stale_on_free: false
+    unlocks_with: "EDINET 有報（免费）或 J-Quants Standard"
+    sector_rules: "无。"
+    status: display
+    planned_status: display
+    evidence_strength: moderate
+    evidence: "G2-19：外资最低 20%（约 0.1-1.3%）或个人最高 20%（约 62-68%）的公司漂移未减弱，这是最明确的条件化结论。Miyajima 等 2015 主要是同期效应 https://www.rieti.go.jp/en/publications/summary/15060019.html 。"
+    why: "不直接评分。接入后作指引信号的交互项，是 EDINET 持股数据最实用的第一个用途。"
+
+  - id: own_activist
+    family: capital_action
+    aliases: [activist]
+    name_zh: "行动型股东 5% 以上持股"
+    plain_zh: "积极股东买入并推动改革的公司。"
+    purpose: catalyst_event
+    direction: none
+    formula: "大量保有報告：提出者属行动型名单且持股>=5%；公开要求或提案记为 vocal。"
+    data_needed: "EDINET 大量保有報告（需维护名单）"
+    available_on_free_plan: false
+    free_plan_note: "Free 无此字段；Standard 有 EDINET 系列。"
+    stale_on_free: false
+    unlocks_with: "EDINET（免费，5 个工作日内提交，有滞后）或 J-Quants Standard"
+    sector_rules: "无。"
+    status: display
+    planned_status: display
+    evidence_strength: moderate
+    evidence: "Franks RIETI 2026-09 讲义（表格错位）：持股期间 BHAR-TOPIX 均值 +11.07%（n=342），vocal +19.96%，mild +1.75%（不显著），中位数低得多 https://www.rieti.go.jp/en/events/bbl/26093001_franks.pdf 。公告后买入能否获利未见单独检验。"
+    why: "方向合理但分布右偏，且数据有提交滞后。先展示和分组验证，不手工设定分值。"
+
+  - id: own_parent_sub
+    family: capital_action
+    aliases: [PARENT_SUB, Q12]
+    name_zh: "親子上場状态"
+    plain_zh: "这家公司是否被上市母公司控股，这既可能带来收购溢价，也可能损害小股东。"
+    purpose: catalyst_event
+    direction: none
+    formula: "母公司持股比例、流通股比例、是否支配股东；<=50% 与 >50% 分开；>=60% 仓位减半（S01）。"
+    data_needed: "EDINET 有報 大株主；TDnet 支配株主事项"
+    available_on_free_plan: false
+    free_plan_note: "Free 无此字段。"
+    stale_on_free: false
+    unlocks_with: "EDINET 有報（免费）或 J-Quants Standard"
+    sector_rules: "无。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "东证资料：上市子公司 215 家（2025-07）https://www.jpx.co.jp/equities/improvements/study-group/nlsgeu000004acah-att/um3qrc0000026zbs.pdf 。未找到上市子公司折价的严谨实证。「未找到」不等于「不存在」，检索噪音大。"
+    why: "方向不唯一，不进评分，仓位约束保留。"
+
+  - id: own_cross_holding
+    family: capital_action
+    aliases: [CROSS_HOLDING, Q12]
+    name_zh: "政策保有股规模"
+    plain_zh: "公司把多少净资产放在了长期持有的别家公司股票上。"
+    purpose: catalyst_event
+    direction: none
+    formula: "特定投資株式合计/ShEq；对比去年变化及缩减目标。"
+    data_needed: "EDINET 有報 特定投資株式"
+    available_on_free_plan: false
+    free_plan_note: "Free 无此字段。"
+    stale_on_free: false
+    unlocks_with: "EDINET 有報（免费）或 J-Quants Standard"
+    sector_rules: "金融业持股性质不同。"
+    status: display
+    planned_status: display
+    evidence_strength: none
+    evidence: "RIETI（Miyajima & Kuroki）：盈利好的公司更早解持 https://www.rieti.go.jp/en/publications/summary/05020006.html 。解持公告的收益事件研究未找到。"
+    why: "是低 ROE 的常见解释，也是潜在催化剂，但目前没有足够证据打分。"
+
+  - id: news_handcrafted_score
+    family: capital_action
+    aliases: [N1 新闻分, 文档 4.7]
+    name_zh: "手工设定的新闻事件分"
+    plain_zh: "人为给每类事件定强度和半衰期后加总成一个分。"
+    purpose: catalyst_event
+    direction: higher_better
+    formula: "clip(Σ strength*w_tier*0.5^(Δt/half_life), −100, 100)，config/events.yaml"
+    data_needed: "staging.disclosures"
+    available_on_free_plan: false
+    free_plan_note: "依赖 TDnet。"
+    stale_on_free: true
+    unlocks_with: "TDnet 事件积累后用事件研究校准"
+    sector_rules: "无。"
+    status: excluded
+    planned_status: display
+    evidence_strength: none
+    evidence: "各事件方向部分有证据（G2-22、G2-25、G2-26、G2-27），强度等级和半衰期是假设。例如回购固定 +2/+3 与 G2-22 的规模连续关系不符。"
+    why: "校准前不合成总分。事件逐类展示，有证据的类别才进入对应家族。events.yaml 的分类本身继续使用。"
+
