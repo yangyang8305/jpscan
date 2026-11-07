@@ -120,7 +120,7 @@ categories:
                "自己株式の取得枠", "自己株式立会外買付取引", "acquisition of treasury shares", "acquisition of treasury stock",
                "repurchase of shares", "share buyback", "share repurchase", "purchase of treasury shares", "acquisition of own shares",
                "determination of matters regarding acquisition of treasury"]
-    exclude: ["取得状況", "取得結果", "買付結果", "取得終了", "取得の終了", "取得の完了", "取得完了", "処分", "status of", "results of", "result of",
+    exclude: ["取得状況", "取得結果", "取得の結果", "買付結果", "買付け結果", "買付けの結果", "買付け価格確定", "取得終了", "取得の終了", "取得の完了", "取得完了", "処分", "status of", "results of", "result of",
               "completion of", "progress of", "disposal", "disposition"]
     direction: 1
     strength: 2
