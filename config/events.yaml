@@ -1,0 +1,604 @@
+# 事件分类表（规划文档 附录 D）：TDnet / EDINET / 新闻标题 → 类别 → 方向 / 强度 / 半衰期
+# 由 jpscan.events.classify 读取。规则层零成本；AI（A3）只处理 needs_ai=true 或未命中的标题，并须引用原文。
+#
+# 匹配规则（classify_title）：
+#   - 标题与关键词都做同一归一化：NFKC（全角→半角、ＭＢＯ→MBO）、去掉所有空白、括号统一（〔〕［］【】→[]）、ASCII 小写。
+#   - 关键词为「精确子串」匹配；category.exclude 命中则该类别不参与；all_of 为「同时包含多个子串」的组合规则。
+#   - 优先级：① hard_exclude 类别（最长关键词优先，等长取代码小者）
+#             ② E38 訂正（标题以「(訂正」等前缀开头或含 E38 关键词；underlying 给出被订正内容的类别）
+#             ③ 修正类：E01/E02（families.earnings_revision）与 E03/E04（families.dividend_revision），方向由 cue 决定；
+#                无 cue 或正负 cue 同时出现 → 方向未定，返回 undetermined 中的伪类别（E01/E02、E03/E04），needs_ai=true
+#             ④ 其余类别按最长关键词，等长取代码小者
+#             ⑤ 均未命中 → E40
+#   - needs_ai：类别自身 needs_ai=true、修正方向未定、或多个命中类别方向相反（冲突）时为 true。
+# 字段：direction ∈ {+1, -1, 0}；strength ∈ [-3, 3]；half_life_days 为交易日（null = 不衰减 / 不适用）；
+#       hard_exclude 触发硬排除；special 进入特殊情形池；download 为 PDF 下载白名单；keyword_strength 为关键词级强度覆盖。
+version: "0.1.0"
+as_of: "2026-11-07"
+source: "docs/日股全量扫描与组合构建_研究与实施规划_v0.1.md 附录 D / 4.7 节"
+
+# 英文披露识别标记（命中即 lang=en；另有 ASCII 字母占比规则）
+lang_markers: ["[英訳]", "(英訳)", "英訳", "[english]", "(english)", "english version", "english translation", "英語版"]
+
+# 这些类别即使 PDF 不在白名单，也始终下载 XBRL zip（决算短信 / 業績予想・配当予想修正含结构化数值）
+xbrl_always: ["E37", "E01", "E02", "E03", "E04", "E01/E02", "E03/E04"]
+
+# 修正类「家族」：关键词命中后由 cue 决定正负类别
+families:
+  earnings_revision:
+    positive: "E01"
+    negative: "E02"
+    undetermined: "E01/E02"
+    keywords: ["業績予想の修正", "業績予想修正", "業績予想を修正", "業績予想の変更", "業績予想数値の修正", "業績見通しの修正",
+               "業績予想値の修正", "利益予想の修正", "実績との差異", "実績値との差異", "決算値との差異", "実績の差異", "実積の差異",
+               "予想値と実績値", "予想と実績", "revision of earnings forecast", "revisions of earnings forecast",
+               "revision to earnings forecast", "revisions to earnings forecast", "revision of consolidated earnings forecast",
+               "revision of financial forecast", "revision of forecast", "revised earnings forecast", "earnings forecast revision",
+               "difference between forecast", "differences between forecast", "differences between the forecast"]
+    all_of: [["業績予想", "修正"], ["業績見通し", "修正"], ["業績予想", "差異"], ["業績予想", "変更"],
+             ["forecast", "revision"], ["forecasts", "revision"], ["forecast", "revised"], ["forecast", "difference"]]
+    cues_positive: ["上方", "増額", "上振れ", "上回る", "upward", "increase"]
+    cues_negative: ["下方", "減額", "下振れ", "下回る", "downward", "decrease"]
+  dividend_revision:
+    positive: "E03"
+    negative: "E04"
+    undetermined: "E03/E04"
+    keywords: ["配当予想の修正", "配当予想修正", "配当予想を修正", "配当予想の変更", "配当予想額の修正", "配当金の修正",
+               "revision of dividend forecast", "revisions of dividend forecast", "revision to dividend forecast",
+               "revision of year-end dividend forecast", "revision of the dividend forecast", "dividend forecast revision"]
+    all_of: [["配当予想", "修正"], ["配当予想", "変更"], ["dividend", "revision"], ["dividend", "revised"]]
+    cues_positive: ["増配", "復配", "記念配当", "特別配当", "上方", "増額", "increase", "commemorative", "resumption", "special dividend"]
+    cues_negative: ["減配", "無配", "下方", "減額", "見送り", "取りやめ", "取り止め", "decrease", "no dividend", "suspension", "omission", "omit"]
+
+# 伪类别：修正方向未定时返回（strength 0，等待 XBRL 数值或 AI 判定）
+undetermined:
+  "E01/E02": {name: "業績予想修正（方向未定）", direction: 0, strength: 0, half_life_days: 20, hard_exclude: false, special: false, download: true,
+              notes: "标题无上方/下方 cue；若 XBRL(rvfc) 可用则按新旧予想数值判定方向，否则交 AI（A3）"}
+  "E03/E04": {name: "配当予想修正（方向未定）", direction: 0, strength: 0, half_life_days: 20, hard_exclude: false, special: false, download: true,
+              notes: "标题无増配/減配 cue；若 XBRL(rvdf) 可用则按新旧配当数值判定方向，否则交 AI（A3）"}
+
+categories:
+  E01:
+    name: "業績予想 上方修正"
+    keywords: ["上方修正", "増額修正", "業績予想の上方修正", "通期業績予想の上方修正", "upward revision", "revised upward", "upward revisions"]
+    direction: 1
+    strength: 3
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    xbrl_hints: ["rvfc"]
+    extract: ["op_revision_pct", "sales_revision_pct", "np_revision_pct"]
+    notes: "抽取修正幅度（営業利益 %）；修正后约 1 个月存在漂移（PEAD 证据）。通用「業績予想の修正」由 families.earnings_revision 处理"
+  E02:
+    name: "業績予想 下方修正"
+    keywords: ["下方修正", "減額修正", "業績予想の下方修正", "通期業績予想の下方修正", "downward revision", "revised downward", "downward revisions"]
+    direction: -1
+    strength: -3
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    xbrl_hints: ["rvfc"]
+    extract: ["op_revision_pct", "sales_revision_pct", "np_revision_pct"]
+    notes: "同 E01；与錯殺 T1 关联"
+  E03:
+    name: "配当予想修正（増配）"
+    keywords: ["増配", "復配", "記念配当", "特別配当", "配当予想の修正(増配)", "配当予想の修正(復配)", "期末配当予想の修正(増配)",
+               "dividend increase", "increase in dividend", "increase of dividend", "commemorative dividend", "resumption of dividend"]
+    keyword_strength: {"記念配当": 1, "特別配当": 1, "commemorative dividend": 1}
+    direction: 1
+    strength: 2
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    xbrl_hints: ["rvdf"]
+    notes: "記念配当 / 特別配当强度 +1；増配公司次年増益概率显著更高（諏訪部 2006）"
+  E04:
+    name: "配当予想修正（減配・無配）"
+    keywords: ["減配", "無配", "配当予想の修正(減配)", "配当予想の修正(無配)", "配当の見送り", "無配転落", "dividend decrease", "decrease in dividend",
+               "reduction of dividend", "no dividend", "suspension of dividend", "omission of dividend"]
+    direction: -1
+    strength: -2
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    xbrl_hints: ["rvdf"]
+    notes: "价值陷阱标记输入"
+  E05:
+    name: "自己株式取得（決定）"
+    keywords: ["自己株式取得に係る事項の決定", "自己株式の取得に係る事項の決定", "自己株式取得に係る事項の決議", "自己株式の取得に係る事項の決議",
+               "自己株式の取得に関するお知らせ", "自己株式の取得及び", "自己株式取得及び", "自己株式の公開買付け", "自己株式取得枠",
+               "自己株式の取得枠", "自己株式立会外買付取引", "acquisition of treasury shares", "acquisition of treasury stock",
+               "repurchase of shares", "share buyback", "share repurchase", "purchase of treasury shares", "acquisition of own shares",
+               "determination of matters regarding acquisition of treasury"]
+    exclude: ["取得状況", "取得結果", "買付結果", "取得終了", "取得の終了", "取得の完了", "取得完了", "処分", "status of", "results of", "result of",
+              "completion of", "progress of", "disposal", "disposition"]
+    direction: 1
+    strength: 2
+    half_life_days: 60
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    extract: ["buyback_ratio_of_shares", "buyback_amount_jpy"]
+    notes: "强度随规模：取得枠 < 時価総額 1% → +1；1–3% → +2；≥ 3%（或 PBR<1 且 ≥ 2%）→ +3（需抽取）。取得状況 / 取得結果（进度报告）不计为新事件"
+  E06:
+    name: "自己株式消却"
+    keywords: ["自己株式の消却", "自己株式消却", "cancellation of treasury shares", "cancellation of treasury stock", "retirement of treasury shares"]
+    direction: 1
+    strength: 1
+    half_life_days: 60
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: ""
+  E07:
+    name: "公募増資・売出"
+    keywords: ["公募による新株式発行", "公募による自己株式の処分", "新株式発行及び株式売出し", "新株式発行並びに株式売出し", "新株式発行及び株式の売出し",
+               "新株式の発行及び株式の売出し", "海外募集による新株式発行", "公募増資", "新株式発行", "新株発行", "自己株式の処分及び株式の売出し",
+               "public offering", "issuance of new shares and secondary offering", "issuance of new shares", "secondary offering of shares",
+               "offering of new shares"]
+    exclude: ["第三者割当", "ストックオプション", "譲渡制限付株式", "株式報酬", "third-party allotment", "third party allotment", "stock option",
+              "restricted stock", "restricted share"]
+    direction: -1
+    strength: -2
+    half_life_days: 60
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    extract: ["dilution_ratio", "use_of_proceeds"]
+    notes: "偿债用途 −3；抽取稀释比例与资金用途；S04。発行価格等の決定（定价通知）不单独匹配"
+  E08:
+    name: "第三者割当"
+    keywords: ["第三者割当による新株式発行", "第三者割当による新株予約権の発行", "第三者割当による自己株式の処分", "第三者割当増資", "第三者割当",
+               "third-party allotment", "third party allotment", "private placement"]
+    exclude: ["行使価額修正条項", "譲渡制限付株式", "株式報酬", "ストックオプション", "restricted stock", "restricted share", "stock option",
+              "exercise price"]
+    direction: -1
+    strength: -1
+    half_life_days: 60
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: true
+    notes: "战略投资者 0；需 AI 判断割当先"
+  E09:
+    name: "転換社債（CB）"
+    keywords: ["転換社債型新株予約権付社債", "新株予約権付社債", "転換社債", "convertible bonds", "convertible bond", "bonds with stock acquisition rights",
+               "bonds with share acquisition rights"]
+    exclude: ["行使価額修正条項", "exercise price"]
+    direction: -1
+    strength: -2
+    half_life_days: 60
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: ""
+  E10:
+    name: "MSワラント"
+    keywords: ["行使価額修正条項付", "行使価額修正条項", "MSワラント", "MSCB", "exercise price amendment", "exercise price revision clause",
+               "exercise price adjustment clause", "exercise price modification", "moving strike"]
+    direction: -1
+    strength: -3
+    half_life_days: null
+    hard_exclude: true
+    special: false
+    download: true
+    needs_ai: false
+    notes: "X06；平均稀释约 13%，长期持续下跌（姚 2021）。行使状況 / 取得消却通知同样命中（仍视为存在 MSW 风险，由复核解除）"
+  E11:
+    name: "TOB（公開買付け）"
+    keywords: ["公開買付けの開始", "公開買付け開始", "公開買付けに関する意見表明", "公開買付けに対する意見表明", "公開買付けに関する賛同", "公開買付け",
+               "公開買付", "応募の推奨", "tender offer", "commencement of tender offer", "opinion regarding tender offer", "opinion on tender offer"]
+    exclude: ["自己株式"]
+    direction: 1
+    strength: 3
+    half_life_days: null
+    hard_exclude: false
+    special: true
+    download: true
+    needs_ai: false
+    extract: ["tob_price", "tob_period_end"]
+    notes: "抽取买付価格；X11 判定（价格达成后排除）；2024 年成立 TOB 平均溢价约 43%。公開買付けの結果 同样命中（事件结束）"
+  E12:
+    name: "MBO"
+    keywords: ["MBOの実施", "MBO", "マネジメント・バイアウト", "マネジメントバイアウト", "経営陣による買収", "management buyout", "management buy-out"]
+    direction: 1
+    strength: 3
+    half_life_days: null
+    hard_exclude: false
+    special: true
+    download: true
+    needs_ai: false
+    extract: ["tob_price"]
+    notes: ""
+  E13:
+    name: "完全子会社化・株式交換"
+    keywords: ["株式交換", "完全子会社化", "株式移転", "簡易株式交換", "株式交付", "完全子会社とする", "share exchange", "wholly-owned subsidiary",
+               "wholly owned subsidiary", "stock transfer", "share transfer"]
+    direction: 0
+    strength: 0
+    half_life_days: null
+    hard_exclude: false
+    special: true
+    download: true
+    needs_ai: true
+    notes: "被收购方 +2（special），收购方 0；需 AI 判断披露方角色"
+  E14:
+    name: "資本業務提携・業務提携"
+    keywords: ["資本業務提携", "業務提携", "資本提携", "包括提携", "提携契約", "業務提携契約", "capital and business alliance", "business alliance",
+               "capital alliance", "strategic alliance", "partnership agreement", "business partnership"]
+    exclude: ["解消", "終了", "dissolution", "termination"]
+    direction: 1
+    strength: 1
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: "提携解消 / 終了 → 不计入（E40）"
+  E15:
+    name: "大型受注・契約"
+    keywords: ["大型受注", "受注に関する", "受注のお知らせ", "受注について", "受注獲得", "契約締結", "契約の締結", "基本契約", "大口契約",
+               "receipt of order", "order received", "orders received", "large-scale order", "large order", "contract signed", "conclusion of contract",
+               "conclusion of agreement", "signing of contract"]
+    exclude: ["受注状況", "受注高", "受注残", "解約", "解除", "cancellation"]
+    direction: 1
+    strength: 1
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: true
+    extract: ["contract_amount_jpy", "ratio_to_annual_sales"]
+    notes: "金额 ≥ 年売上 10% 才计分；需 AI/抽取金额"
+  E16:
+    name: "特別損失・減損"
+    keywords: ["特別損失の計上", "特別損失", "減損損失の計上", "減損損失", "減損の計上", "貸倒引当金の計上", "貸倒損失", "extraordinary loss",
+               "extraordinary losses", "impairment loss", "impairment losses", "recording of impairment"]
+    direction: -1
+    strength: -2
+    half_life_days: 60
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    extract: ["loss_amount_jpy"]
+    notes: "区分一次性；与业绩修正同时出现时修正类优先"
+  E17:
+    name: "不適切会計"
+    keywords: ["不適切な会計処理", "不適切会計", "不適切な会計", "第三者委員会の設置", "第三者委員会設置", "特別調査委員会の設置", "特別調査委員会設置",
+               "調査委員会の設置", "調査委員会設置", "過年度決算の訂正", "過年度の決算訂正", "過年度有価証券報告書等の訂正", "過年度決算短信等の訂正",
+               "過年度の有価証券報告書", "不正会計", "会計処理の誤り", "不適切な取引", "inappropriate accounting", "improper accounting",
+               "third-party committee", "third party committee", "special investigation committee", "investigation committee",
+               "restatement of past", "accounting irregularities"]
+    direction: -1
+    strength: -3
+    half_life_days: null
+    hard_exclude: true
+    special: false
+    download: true
+    needs_ai: false
+    notes: "X04；hard_exclude 直至结案（调查报告 + 訂正完成 + 監査意見），解除由复核登记"
+  E18:
+    name: "行政処分・不祥事"
+    keywords: ["行政処分", "業務停止命令", "業務改善命令", "改善命令", "措置命令", "課徴金納付命令", "課徴金", "不祥事", "法令違反", "強制捜査", "逮捕",
+               "立入検査", "独占禁止法", "排除措置命令", "勧告", "administrative action", "administrative disposition", "business suspension order",
+               "business improvement order", "misconduct", "violation of law", "surcharge payment order", "cease and desist"]
+    direction: -1
+    strength: -3
+    half_life_days: 120
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: "T3"
+  E19:
+    name: "訴訟"
+    keywords: ["訴訟の提起", "訴訟提起", "訴訟", "提訴", "損害賠償請求", "仮処分", "lawsuit", "litigation", "filing of a lawsuit", "legal action",
+               "provisional disposition"]
+    exclude: ["和解", "判決", "settlement", "judgment"]
+    direction: -1
+    strength: -1
+    half_life_days: 60
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: "和解 / 判決 另行 AI 判断（E40）"
+  E20:
+    name: "監理銘柄・整理銘柄"
+    keywords: ["監理銘柄", "整理銘柄", "特設注意市場銘柄", "securities on alert", "securities under supervision", "security on alert",
+               "securities to be delisted", "designation as securities under supervision"]
+    exclude: ["指定解除", "解除", "release", "removal", "lifted", "cancellation of designation"]
+    direction: -1
+    strength: -3
+    half_life_days: null
+    hard_exclude: true
+    special: false
+    download: true
+    needs_ai: false
+    notes: "X02；指定解除通知不触发（E40，由复核登记解除）"
+  E21:
+    name: "上場廃止"
+    keywords: ["上場廃止", "上場廃止申請", "上場廃止の決定", "delisting", "delisted", "application for delisting"]
+    direction: -1
+    strength: -3
+    half_life_days: null
+    hard_exclude: true
+    special: false
+    download: true
+    needs_ai: false
+    notes: "X02；TOB 结果通知中的「上場廃止の見込み」同样命中（符合 X11 处理）"
+  E22:
+    name: "決算発表延期"
+    keywords: ["決算発表の延期", "決算発表日の延期", "決算発表予定日の延期", "決算短信の開示延期", "決算短信の発表延期", "決算発表延期", "決算の発表延期",
+               "有価証券報告書の提出期限延長", "提出期限延長", "提出期限の延長", "四半期報告書の提出期限", "postponement of the announcement",
+               "postponement of announcement", "postponement of financial results", "delay in the announcement", "delay in announcement of financial results",
+               "extension of the deadline for submission", "extension of deadline for submission"]
+    direction: -1
+    strength: -2
+    half_life_days: 60
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: "X05 直至解除"
+  E23:
+    name: "会計監査人の異動"
+    keywords: ["会計監査人の異動", "公認会計士等の異動", "監査法人の異動", "会計監査人の辞任", "会計監査人の解任", "change of accounting auditor",
+               "change in accounting auditor", "change of independent auditor", "change of auditor", "change in auditor", "change of certified public accountants"]
+    direction: -1
+    strength: -1
+    half_life_days: 60
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: "频繁交代 → Q11"
+  E24:
+    name: "継続企業の前提"
+    keywords: ["継続企業の前提に関する注記", "継続企業の前提に関する重要事象", "継続企業の前提", "going concern"]
+    exclude: ["解消", "resolution of", "resolved", "removal of"]
+    direction: -1
+    strength: -3
+    half_life_days: null
+    hard_exclude: true
+    special: false
+    download: true
+    needs_ai: false
+    notes: "X03；解消通知不触发（E40，由复核登记解除）。「重要事象等」（无注记）也按硬排除处理，复核可放宽"
+  E25:
+    name: "株式分割"
+    keywords: ["株式分割", "stock split", "share split"]
+    exclude: ["株式併合", "reverse"]
+    direction: 1
+    strength: 1
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    extract: ["split_ratio"]
+    notes: "公告后约 +5pp，30 个交易日内归零（大和総研 2023）；不入中期评分"
+  E26:
+    name: "株式併合"
+    keywords: ["株式併合", "reverse stock split", "share consolidation", "consolidation of shares"]
+    direction: 0
+    strength: 0
+    half_life_days: null
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: "企业行动表"
+  E27:
+    name: "株主優待 新設 / 拡充"
+    keywords: ["株主優待制度の新設", "株主優待制度の導入", "株主優待制度の拡充", "株主優待制度の変更(拡充)", "株主優待制度新設", "株主優待制度導入",
+               "株主優待の新設", "株主優待の導入", "株主優待の拡充", "株主優待制度の再開", "株主優待制度の復活", "株主優待制度(拡充)",
+               "introduction of shareholder benefit", "introduction of a shareholder benefit", "establishment of shareholder benefit",
+               "expansion of shareholder benefit", "enhancement of shareholder benefit", "introduction of shareholder special benefit"]
+    direction: 1
+    strength: 1
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: ""
+  E28:
+    name: "株主優待 廃止 / 縮小"
+    keywords: ["株主優待制度の廃止", "株主優待制度の変更", "株主優待制度の一部変更", "株主優待制度の縮小", "株主優待制度の見直し", "株主優待制度の変更(縮小)",
+               "株主優待の廃止", "株主優待の変更", "株主優待の縮小", "株主優待制度廃止", "株主優待制度の休止", "abolition of shareholder benefit",
+               "abolishment of shareholder benefit", "discontinuation of shareholder benefit", "termination of shareholder benefit",
+               "change in shareholder benefit", "changes to shareholder benefit", "revision of shareholder benefit", "reduction of shareholder benefit"]
+    direction: -1
+    strength: -1
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: "「変更」方向不明时按 −1 处理，AI 可修正"
+  E29:
+    name: "「資本コストや株価を意識した経営」対応"
+    keywords: ["資本コストや株価を意識した経営の実現に向けた対応", "資本コストや株価を意識した経営", "株価を意識した経営", "資本コスト",
+               "cost of capital and stock price", "cost of capital and share price", "management conscious of cost of capital",
+               "management that is conscious of cost of capital", "conscious of cost of capital"]
+    direction: 1
+    strength: 1
+    half_life_days: 120
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    extract: ["roe_target", "pbr_target", "target_year"]
+    notes: "Q10、value.catalyst；含量化目标 +2；披露质量与异常收益相关（附录 G）"
+  E30:
+    name: "中期経営計画"
+    keywords: ["中期経営計画", "中期経営方針", "中長期経営計画", "中期計画", "中期事業計画", "medium-term management plan", "mid-term management plan",
+               "medium term management plan", "mid-term business plan", "medium-term business plan", "medium-term plan", "mid-term plan"]
+    direction: 0
+    strength: 0
+    half_life_days: 120
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: true
+    extract: ["roe_target", "op_target", "target_year"]
+    notes: "+1 / −1 由 AI 判断；抽取目标 ROE / 利益"
+  E31:
+    name: "政策保有株式縮減・資本政策"
+    keywords: ["政策保有株式の縮減", "政策保有株式の売却", "政策保有株式の削減", "政策保有株式", "株主還元方針", "株主還元の方針", "株主還元策",
+               "株主還元の強化", "還元方針", "累進配当", "配当方針の変更", "資本政策", "shareholder return policy", "shareholder returns policy",
+               "reduction of cross-shareholdings", "cross-shareholdings", "progressive dividend", "dividend policy"]
+    direction: 1
+    strength: 1
+    half_life_days: 120
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: ""
+  E32:
+    name: "大量保有報告（新規・増加）"
+    keywords: ["大量保有報告書", "変更報告書", "large shareholding report", "substantial shareholding report"]
+    direction: 1
+    strength: 1
+    half_life_days: 120
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: "主要来源 EDINET；行动型股东 +2（需维护 activists.yaml）"
+  E33:
+    name: "大株主の売却・ロックアップ解除"
+    keywords: ["株式の売出し", "株式売出し", "売出しに関する", "ロックアップ", "大株主による売却", "secondary offering", "lock-up", "lockup",
+               "sale of shares by", "disposal of shares by"]
+    direction: -1
+    strength: -1
+    half_life_days: 60
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: "T4；含新株式発行的売出 → E07（更长关键词优先）"
+  E34:
+    name: "指数採用 / 除外"
+    keywords: ["TOPIX", "日経平均株価", "日経平均", "日経225", "構成銘柄", "JPX日経インデックス400", "JPX日経400", "東証株価指数", "MSCI", "FTSE",
+               "指数への採用", "指数からの除外", "nikkei 225", "nikkei stock average", "constituent", "jpx-nikkei index 400", "index inclusion",
+               "index exclusion"]
+    direction_cues:
+      positive: ["採用", "組入れ", "組み入れ", "組入", "新規採用", "選定", "inclusion", "included", "addition", "added", "selected", "adoption"]
+      negative: ["除外", "削除", "exclusion", "excluded", "removal", "removed", "deletion", "deleted"]
+    direction: 0
+    strength: 1
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: "方向由 cue 决定（採用 +1 / 除外 −1，无 cue → 0 并 needs_ai）；公告后数日效应显著且短暂；除外股可作错杀候选（岡田 2004、原田 2017）"
+  E35:
+    name: "子会社・事業の譲渡 / 取得"
+    keywords: ["子会社の異動", "連結子会社の異動", "特定子会社の異動", "子会社の異動を伴う", "子会社化", "株式の取得(子会社化)", "株式取得(子会社化)",
+               "事業譲渡", "事業の譲渡", "事業譲受", "事業の譲受け", "事業の譲受", "固定資産の譲渡", "固定資産の取得", "子会社株式の譲渡",
+               "持分の譲渡", "株式の譲渡", "会社分割", "吸収分割", "吸収合併", "合併契約", "合併に関する", "transfer of subsidiary",
+               "transfer of shares of subsidiary", "transfer of shares in subsidiary", "acquisition of shares", "making it a subsidiary",
+               "making a subsidiary", "transfer of business", "business transfer", "transfer of fixed assets", "acquisition of fixed assets",
+               "change in subsidiary", "change in subsidiaries", "changes in subsidiaries", "absorption-type merger", "company split", "merger"]
+    exclude: ["自己株式", "treasury", "完全子会社化", "株式交換"]
+    direction: 0
+    strength: 0
+    half_life_days: 60
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: true
+    extract: ["deal_amount_jpy"]
+    notes: "±1 由 AI 判断（譲渡損益、规模）"
+  E36:
+    name: "役員の異動"
+    keywords: ["代表取締役の異動", "代表取締役社長の異動", "代表者の異動", "役員の異動", "取締役の異動", "執行役員の異動", "役員の人事", "人事異動",
+               "組織変更及び人事異動", "組織変更および人事異動", "社長交代", "代表取締役の交代", "役員人事", "取締役候補者", "監査役の異動",
+               "change of representative director", "changes in representative director", "change in representative director",
+               "change of directors", "changes of directors", "change in directors", "changes in directors", "change of officers", "changes in officers",
+               "change in officers", "personnel change", "personnel changes", "change of president", "changes in management", "change in management",
+               "change of executive officers", "changes of executive officers"]
+    direction: 0
+    strength: 0
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: false
+    needs_ai: false
+    notes: "多为中性；不祥事关联 −1 由 AI 判断"
+  E37:
+    name: "決算短信（定期）"
+    keywords: ["決算短信[日本基準]", "決算短信[IFRS]", "決算短信[米国基準]", "決算短信(日本基準)", "決算短信(IFRS)", "決算短信", "決算短信[JMIS]",
+               "consolidated financial results for", "financial results for the", "summary of consolidated financial results",
+               "summary of financial results", "non-consolidated financial results for", "[japanese gaap]", "(japanese gaap)", "[j-gaap]",
+               "[ifrs]", "(ifrs)", "[us gaap]", "[japan gaap]"]
+    exclude: ["説明資料", "説明会", "補足資料", "補足説明", "質疑応答", "プレゼンテーション", "presentation", "supplementary", "briefing", "explanatory",
+              "fact sheet", "factsheet", "q&a", "questions and answers", "materials", "summary of questions"]
+    direction: 0
+    strength: 0
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    xbrl_hints: ["acedjpsm", "qcedjpsm", "scedjpsm", "anedjpsm", "qnedjpsm", "snedjpsm", "acedifsm", "qcedifsm", "scedifsm", "acedussm", "qcedussm",
+                 "scedussm", "acedjmsm", "aneduss", "edjp", "edif", "edus"]
+    extract: ["NetSales", "OperatingIncome", "OrdinaryIncome", "ProfitAttributableToOwnersOfParent", "ForecastNetSales", "ForecastOperatingIncome",
+              "ForecastOrdinaryIncome", "ForecastProfitAttributableToOwnersOfParent", "DividendPerShare", "ForecastDividendPerShare"]
+    notes: "核心财务入口；强度由 A1 计算（翌期予想意外为主：+2 … −2）；XBRL 入口：acedjpsm 通期連結日本基準、qcedjpsm 1Q/3Q、scedjpsm 2Q、anedjpsm 非連結、acedifsm IFRS、acedussm 米国基準"
+  E38:
+    name: "訂正（各类）"
+    prefix_keywords: ["(訂正", "(数値データ訂正", "(追加訂正", "(再訂正", "(訂正・", "[訂正", "(correction", "(corrected", "(amendment"]
+    keywords: ["一部訂正", "訂正に関するお知らせ", "訂正のお知らせ", "訂正について", "数値データ訂正", "partial correction", "correction of",
+               "corrections to", "correction to", "notice of correction"]
+    exclude: ["過年度決算の訂正", "過年度の決算訂正", "過年度有価証券報告書等の訂正", "過年度決算短信等の訂正"]
+    direction: -1
+    strength: -1
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: true
+    needs_ai: false
+    notes: "数据修订入口；classify 返回 underlying = 被订正内容的类别（去掉前缀后再分类）。過年度決算の訂正 属 E17"
+  E39:
+    name: "新規上場・市場区分変更"
+    keywords: ["新規上場", "市場区分の変更", "市場区分変更", "上場市場の変更", "市場変更", "プライム市場への", "スタンダード市場への", "グロース市場への",
+               "上場承認", "東京証券取引所への上場", "new listing", "initial public offering", "change of market segment", "change in market segment",
+               "transfer to the prime market", "transfer to the standard market", "listing on the"]
+    exclude: ["上場廃止", "delisting", "上場維持基準"]
+    direction: 0
+    strength: 0
+    half_life_days: 20
+    hard_exclude: false
+    special: false
+    download: false
+    needs_ai: false
+    notes: "主数据；上場維持基準への適合 相关通知归 E40（X10 由复核登记）"
+  E40:
+    name: "その他"
+    keywords: []
+    direction: 0
+    strength: 0
+    half_life_days: null
+    hard_exclude: false
+    special: false
+    download: false
+    needs_ai: false
+    notes: "上記以外；AI 按需复判（決算説明資料、月次、IR 等多为噪声）"
