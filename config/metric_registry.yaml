@@ -667,8 +667,8 @@ metrics:
     plain_zh: "公布的实绩比公司之前的预测好多少。"
     purpose: catalyst_event
     direction: higher_better
-    formula: "(OdP 或 OP 实绩 − 最新 FOP)/(MktCap*1e6)"
-    data_needed: "FY 行实绩与前次 FOP"
+    formula: "(OdP − 上一文档 fc(FOdP))/(MktCap*1e6)；无 FOdP 时 (OP − 上一文档 fc(FOP))/(MktCap*1e6)。不跨口径相减。"
+    data_needed: "FY 行实绩（OdP、OP）与上一文档的 FOdP、FOP"
     available_on_free_plan: true
     free_plan_note: "须等回填。"
     stale_on_free: true
@@ -707,10 +707,10 @@ metrics:
     plain_zh: "看市场在财报发布当天用脚投票的结果，它能部分代替散户拿不到的分析师一致预期。"
     purpose: catalyst_event
     direction: higher_better
-    formula: "AdjC 日收益 − 当日全市场中位收益，取 effective_date 当天（15:30 后披露顺延到 D+1），可扩到 0 至 +1 日。"
-    data_needed: "prices_daily.AdjC；financial_statements.effective_date, DiscTime"
+    formula: "日收益（C 与 AdjFactor 口径）− 当日全市场中位收益，只取 effective_date 当天，窗口不扩。15:30:00 及之后披露顺延到 D+1（恰好 15:30:00 也顺延）。"
+    data_needed: "prices_daily.C, AdjFactor；financial_statements.effective_date, DiscTime"
     available_on_free_plan: true
-    free_plan_note: "实测 |AR|：15:30 前披露 D0 3.96%、前一日 1.39%；15:30 后 D+1 4.58%、D0 1.75%，印证生效日规则。"
+    free_plan_note: "实测 |AR|：15:30 前披露 D0 3.96%、前一日 1.39%；15:30 后 D+1 4.58%、D0 1.75%，印证生效日规则。44% 的文档恰好 15:30:00 披露，|AR| 中位 D0 1.17%、D+1 3.30%。东证 2024-11-05 才从 15:00 延长到 15:30，jquants_norm.effective_date_for 固定用 15:30，此前 15:00-15:29 的披露会算错，须负责模块修改。"
     stale_on_free: true
     unlocks_with: "实盘：J-Quants Light 以上"
     sector_rules: "无。"
