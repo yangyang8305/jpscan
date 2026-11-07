@@ -7,6 +7,8 @@ name = "jpscan"
 version = "0.1.0"
 description = "日本上市股票全量扫描、分析与组合构建工具（本地优先、全量采集、可复现）"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
   "pandas>=2.2",
   "numpy>=1.26",
