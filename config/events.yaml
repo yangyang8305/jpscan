@@ -4,6 +4,7 @@
 # 匹配规则（classify_title）：
 #   - 标题与关键词都做同一归一化：NFKC（全角→半角、ＭＢＯ→MBO）、去掉所有空白、括号统一（〔〕［］【】→[]）、ASCII 小写。
 #   - 关键词为「精确子串」匹配；category.exclude 命中则该类别不参与；all_of 为「同时包含多个子串」的组合规则。
+#     例外：≤5 字符的纯 ASCII 关键词（mbo、msci…）要求词边界，否则 embodying 会命中 MBO；families.*.all_of_unless 命中时该家族的 all_of 不生效。
 #   - 优先级：① hard_exclude 类别（最长关键词优先，等长取代码小者）
 #             ② E38 訂正（标题以「(訂正」等前缀开头或含 E38 关键词；underlying 给出被订正内容的类别）
 #             ③ 修正类：E01/E02（families.earnings_revision）与 E03/E04（families.dividend_revision），方向由 cue 决定；
@@ -37,6 +38,7 @@ families:
                "difference between forecast", "differences between forecast", "differences between the forecast"]
     all_of: [["業績予想", "修正"], ["業績見通し", "修正"], ["業績予想", "差異"], ["業績予想", "変更"],
              ["forecast", "revision"], ["forecasts", "revision"], ["forecast", "revised"], ["forecast", "difference"]]
+    all_of_unless: ["dividend"]   # 英文 Revision of Dividend Forecast 属配当家族，不能靠 forecast+revision 算业绩修正
     cues_positive: ["上方", "増額", "上振れ", "上回る", "upward", "increase"]
     cues_negative: ["下方", "減額", "下振れ", "下回る", "downward", "decrease"]
   dividend_revision:
