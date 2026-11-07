@@ -64,13 +64,13 @@ metrics:
     plain_zh: "按公司自己的利润预测，每投入 100 元股价一年能赚多少。"
     purpose: undervaluation
     direction: higher_better
-    formula: "valuation_daily.FwdEPS / C。亏损预测得到负值，排在最后。FwdEPS 空表示未给预想，记为未知。"
-    data_needed: "valuation_daily.FwdEPS；prices_daily.C"
+    formula: "valuation_daily.FwdEPS / C。亏损预测得到负值，排在最后。FwdEPS 空表示没有全年预想：回退 EPS/C（TTM），只与同业的 TTM 值比较并标低置信，不适用 gate_one_off。"
+    data_needed: "valuation_daily.FwdEPS, EPS；prices_daily.C"
     available_on_free_plan: true
     free_plan_note: "当日覆盖 Prime 95%、Standard 93%、Growth 85%。valuation_daily.FwdEPS 约等于 FNP/(ShOutFY−TrShFY)（吻合 90%），与公司公布的 FEPS 只吻合 77%，两者不可混用。"
     stale_on_free: false
     unlocks_with: null
-    sector_rules: "证券业预想大多缺失（FwdEPS 覆盖 27%），记未知，不扣分。不动产业低 PER 是常态，只在行业内比较。周期行业见 gate_peak_earnings。"
+    sector_rules: "证券业预想大多缺失（FwdEPS 覆盖 27%），走 TTM 回退，不扣分。不动产业低 PER 是常态，只在行业内比较。周期行业见 gate_peak_earnings。"
     status: score
     planned_status: score
     evidence_strength: moderate
@@ -1711,13 +1711,13 @@ metrics:
     plain_zh: "公司没给盈利目标时，要换一套算法并明确标注，不能当坏事也不能当 0。"
     purpose: exclusion_filter
     direction: flag
-    formula: "FEPS 或 FOP 为空（非 FY 行）时，依赖预想的指标置未知；改用 TTM 并标低置信。"
-    data_needed: "financial_statements.FEPS, FOP"
+    formula: "fc(FEPS)、fc(FOP)、fc(FNP) 全为空时，依赖预想的指标置未知：val_fwd_ep 走 TTM 回退并标低置信，guidance_change 记 unknown 而不是 miss，不能当坏事也不能当 0。"
+    data_needed: "financial_statements.FEPS, FOP, FNP, NxFEPS, NxFOP, NxFNp；valuation_daily.EPS"
     available_on_free_plan: true
-    free_plan_note: "FEPS 空值全体 13.5%，证券 81%，水产 36%，医药 31%，情报通信 21%，Growth 27%，Prime 8.7%。"
+    free_plan_note: "FEPS 空值全体 13.5%，证券 81%，水产 36%，医药 31%，情报通信 21%，Growth 27%，Prime 8.7%。核心池 124 只 FwdEPS 为空，市值前 50 中占 20%、前 200 中占 11%，所以不能让它们永远进不了篮子。核对 raw：東京エレクトロン 的 1Q 行全年预想字段在源数据中就是空，只有 2Q 预想，不是 ingest 缺口；核心池这样只给半期预想的只有 6 只。其余全年和半期都为空的原因未逐家核实。"
     stale_on_free: false
     unlocks_with: null
-    sector_rules: "证券业走 PBR 对 TTM ROE 的路径。"
+    sector_rules: "证券业走 TTM 回退。"
     status: gate
     planned_status: gate
     evidence_strength: moderate
@@ -1977,6 +1977,7 @@ families:
     metrics: [guid_forecast_innovation, guid_revision_event]
     planned_metrics: [guid_bias, guid_q_sue, guid_earnings_reaction]
     absence_means: no_signal
+    no_forecast_means: unknown    # 公司没有任何预想字段时不算 miss，见 gate_guidance_absent
     threshold:
       min_known: 1
       min_hits: 1
