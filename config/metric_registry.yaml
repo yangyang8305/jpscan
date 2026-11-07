@@ -1984,7 +1984,7 @@ families:
       hit_rules:
         - {metric: guid_forecast_innovation, rule: group_best_pct, group: gaap, value: 0.30, window_days: 60}
         - {metric: guid_revision_event, rule: event_up_top_pct, value: 0.30, window_days: 30, noise_floor: 0.01}
-    fail_rule: "30 个交易日内 guid_revision_event 下调超过 noise_floor；或 60 个交易日内 guid_forecast_innovation 落在最差 30%"
+    fail_rule: "30 个交易日内 guid_revision_event 下调超过 noise_floor。guid_forecast_innovation 的负值只展示，不算 fail：相对排名的最差 30% 分界只有约 −0.5% 市值，日本公司又常有保守指引，这条曾否决 2026-06-30 核心池 32% 的估值命中；指引走低本身已压低 E/P。"
     measured:
       known_share: {Prime: 0.95, Standard: 0.94, Growth: 0.85}
       hits_all: 236
