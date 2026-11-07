@@ -13,28 +13,34 @@
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
 import re
 import time
 import unicodedata
-from datetime import date
+import zipfile
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import requests
 
 from ..ledger import Ledger
 from ..paths import DataPaths
 from ..util.common import RateLimiter, to_date, today_jst
-from .base import RawSink, http_session
+from .base import RawSink, get_with_retry, http_session
 
 log = logging.getLogger("jpscan.edinet")
 
 API_BASE = "https://api.edinet-fsa.go.jp/api/v2/"
+CODE_LIST_URL = "https://disclosure2dl.edinet-fsa.go.jp/searchdocument/codelist/Edinetcode.zip"
 SOURCE = "edinet"
 LIST_DATASET = "documents_list"
 DOC_DATASET = "documents"
+CODE_DATASET = "codelist"
 
 KEY_PARAM = "Subscription-Key"
 KEY_HELP = ("未设置 EDINET_API_KEY：EDINET 书类一览与书类取得需要 API Key（代码表不需要）。"
@@ -234,9 +240,82 @@ class EdinetClient:
     def _clean_bytes(self, content: bytes) -> bytes:
         return content.replace(self.api_key.encode(), b"***") if self.api_key else content
 
+    # ---------------- 代码表（无需密钥） ----------------
+    def fetch_code_list(self) -> Path:
+        """下载 Edinetcode.zip 并落盘，返回本地路径。"""
+        self.limiter.wait()
+        r = get_with_retry(self.session, CODE_LIST_URL)
+        if r.status_code != 200 or not r.content.startswith(b"PK"):
+            raise EdinetError(f"Edinetcode.zip 下载失败：HTTP {r.status_code}")
+        key = f"{today_jst().isoformat()}_Edinetcode"
+        return self.sink.save_bytes(CODE_DATASET, key, r.content, ".zip", params={"url": CODE_LIST_URL},
+                                    http_status=r.status_code)
+
 
 def _retry_after(r: requests.Response, default: float) -> float:
     try:
         return max(float(r.headers.get("Retry-After", default)), 1.0)
     except (TypeError, ValueError):
         return default
+
+
+# ---------------- 代码表解析（纯函数） ----------------
+_CODE_COLUMNS = {
+    "EDINETコード": "edinet_code", "提出者種別": "filer_type", "上場区分": "listed", "連結の有無": "consolidated",
+    "資本金": "capital", "決算日": "fiscal_year_end", "提出者名": "name", "提出者名(英字)": "name_en",
+    "提出者名(ヨミ)": "name_kana", "所在地": "address", "提出者業種": "industry", "証券コード": "sec_code",
+    "提出者法人番号": "jcn",
+}
+_YES_NO = {"有": True, "無": False}
+
+
+def parse_code_list(zip_path: Path | str) -> pd.DataFrame:
+    """Edinetcode.zip → DataFrame（edinet_codes 表）。CSV 为 cp932：首行含下载日，次行为列头。"""
+    with zipfile.ZipFile(zip_path) as z:
+        names = [n for n in z.namelist() if n.lower().endswith(".csv")]
+        if not names:
+            raise EdinetError("Edinetcode.zip 内没有 CSV")
+        name = next((n for n in names if "EdinetcodeDlInfo" in n), names[0])
+        text = z.read(name).decode("cp932", errors="replace")
+    rows = list(csv.reader(io.StringIO(text, newline="")))
+    normalized = [[unicodedata.normalize("NFKC", c).strip() for c in row] for row in rows[:5]]
+    head_idx = next((i for i, row in enumerate(normalized) if "EDINETコード" in row), None)
+    if head_idx is None:
+        raise EdinetError("EdinetcodeDlInfo.csv 找不到列头行（格式可能已变更）")
+    columns = [_CODE_COLUMNS.get(c) for c in normalized[head_idx]]
+    missing = sorted(set(_CODE_COLUMNS.values()) - set(columns))
+    if missing:
+        raise EdinetError(f"EdinetcodeDlInfo.csv 缺少列：{missing}")
+    as_of = _parse_as_of(" ".join(",".join(r) for r in rows[:head_idx]))
+    out: list[dict[str, Any]] = []
+    for row in rows[head_idx + 1:]:
+        rec = {col: (val.strip() or None) for col, val in zip(columns, row) if col}
+        if not rec.get("edinet_code"):
+            continue
+        code, code4 = normalize_sec_code(rec.pop("sec_code", None))
+        out.append({
+            "edinet_code": rec["edinet_code"], "filer_type": rec.get("filer_type"),
+            "listed": rec.get("listed") == "上場", "consolidated": _YES_NO.get(rec.get("consolidated") or ""),
+            "capital": _to_float(rec.get("capital")), "fiscal_year_end": rec.get("fiscal_year_end"),
+            "name": rec.get("name"), "name_en": rec.get("name_en"), "name_kana": rec.get("name_kana"),
+            "address": rec.get("address"), "industry": rec.get("industry"), "Code": code, "code4": code4,
+            "jcn": rec.get("jcn"), "as_of": as_of,
+        })
+    return pd.DataFrame(out)
+
+
+def _parse_as_of(text: str) -> date | None:
+    m = re.search(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日", text)
+    if not m:
+        return None
+    try:
+        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+    except ValueError:
+        return None
+
+
+def _to_float(s: Any) -> float | None:
+    try:
+        return float(str(s).replace(",", ""))
+    except (TypeError, ValueError):
+        return None

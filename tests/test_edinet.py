@@ -15,7 +15,7 @@ import pytest
 import requests
 
 from jpscan.connectors.edinet import (EdinetAuthError, EdinetClient, EdinetError, EdinetKeyMissing, EdinetNotFound,
-                                      doc_kind, normalize_sec_code)
+                                      doc_kind, normalize_sec_code, parse_code_list)
 from jpscan.ledger import Ledger
 from jpscan.paths import DataPaths
 from jpscan.store import Store
@@ -342,5 +342,35 @@ def test_doc_id_is_validated_before_use_in_paths(env, bad):
 def test_doc_type_is_validated(env):
     with pytest.raises(ValueError):
         make_client(env, FakeSession([])).doc_path("S100TST1", 9)
+
+
+# ---------------- 代码表 ----------------
+def test_parse_code_list(tmp_path):
+    z = tmp_path / "Edinetcode.zip"
+    z.write_bytes(make_code_list_zip())
+    df = parse_code_list(z)
+    assert list(df["edinet_code"]) == ["E99990", "E99991", "E99992"]   # 空行被跳过
+    a, b, c = (df.iloc[i] for i in range(3))
+    assert a["Code"] == "99990" and a["code4"] == "9999" and a["listed"] and a["consolidated"] is True
+    assert a["capital"] == 1000.0 and a["fiscal_year_end"] == "3月31日" and a["name_en"] == "Kakuu Shoji Co. Ltd."
+    assert a["name_kana"] == "カクウショウジ" and a["jcn"] == "1234567890123" and a["as_of"] == date(2026, 11, 6)
+    assert b["Code"] == "99980" and b["consolidated"] is False        # 4 位补 0
+    assert not c["listed"] and pd.isna(c["Code"]) and pd.isna(c["consolidated"]) and pd.isna(c["capital"])
+
+
+def test_parse_code_list_bad_header_raises(tmp_path):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("EdinetcodeDlInfo.csv", "a,b\r\n1,2\r\n".encode("cp932"))
+    p = tmp_path / "bad.zip"
+    p.write_bytes(buf.getvalue())
+    with pytest.raises(EdinetError, match="列头"):
+        parse_code_list(p)
+
+
+def test_code_list_http_error(env):
+    client = make_client(env, FakeSession([FakeResponse(b"nope", status_code=403, content_type="text/html")]), key=None)
+    with pytest.raises(EdinetError, match="403"):
+        client.fetch_code_list()
 
 
