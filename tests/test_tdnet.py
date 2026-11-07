@@ -1,4 +1,5 @@
 """TDnet 连接器测试。全部使用合成数据：公司与数字均为虚构，真实下载内容不进入仓库。"""
+import zipfile
 from datetime import date
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import requests
 
 from jpscan.connectors.base import RawSink
 from jpscan.connectors.tdnet import SOURCE, TdnetBlocked, TdnetClient, TdnetFormatError, assign_disclosure_ids, parse_list_page
+from jpscan.connectors.tdnet_xbrl import parse_summary
 from jpscan.events.classify import classify_title, dedupe_ja_en, detect_lang, download_policy, is_correction_title, load_taxonomy, normalize_title
 from jpscan.ledger import Ledger
 from jpscan.paths import DataPaths
@@ -109,6 +111,8 @@ def test_revision_family_combinations(tax, title, category, direction, needs_ai)
     ("継続企業の前提に関する重要事象の解消に関するお知らせ", "E40"),
     ("監理銘柄の指定解除に関するお知らせ", "E40"),
     ("資本業務提携の解消に関するお知らせ", "E40"),
+    ("自己株式立会外買付取引（ToSTNeT-3）による自己株式の買付け結果に関するお知らせ", "E40"),
+    ("自己株式立会外買付取引（ToSTNeT-3）による自己株式の買付け価格確定のお知らせ", "E40"),
     ("決算説明資料（決算短信補足資料）", "E40"),
     ("公募による新株式発行及び株式売出しに関するお知らせ", "E07"),  # 更长关键词优先于 E33
 ])
@@ -317,3 +321,79 @@ def test_download_file_checks_content(tmp_path):
     assert client.download_file(url + "bad.pdf", "pdf", "bad", ".pdf", b"%PDF", "2026-01") is None
     assert client.download_file(url + "gone.pdf", "pdf", "gone", ".pdf", b"%PDF", "2026-01") is None
     assert list((paths.quarantine / "tdnet" / "pdf").glob("bad_*.bin"))
+
+
+# ---------------- XBRL ----------------
+IXBRL = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:ix="http://www.xbrl.org/2008/inlineXBRL"
+      xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:xbrldi="http://xbrl.org/2006/xbrldi"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:tse-ed-t="http://www.xbrl.tdnet.info/taxonomy/jp/tse/tdnet/ed/t/2014-01-12"
+      xmlns:ixt="http://www.xbrl.org/inlineXBRL/transformation/2011-07-31">
+<head><title>synthetic</title></head><body>
+<ix:header><ix:resources>
+<xbrli:context id="CurrentYearDuration_ConsolidatedMember_ResultMember"><xbrli:entity><xbrli:segment>
+  <xbrldi:explicitMember dimension="tse-ed-t:ConsolidatedNonconsolidatedAxis">tse-ed-t:ConsolidatedMember</xbrldi:explicitMember>
+  <xbrldi:explicitMember dimension="tse-ed-t:ResultForecastAxis">tse-ed-t:ResultMember</xbrldi:explicitMember>
+</xbrli:segment></xbrli:entity><xbrli:period><xbrli:startDate>2026-04-01</xbrli:startDate><xbrli:endDate>2027-03-31</xbrli:endDate></xbrli:period></xbrli:context>
+<xbrli:context id="NextYearDuration_ConsolidatedMember_ForecastMember"><xbrli:entity><xbrli:segment>
+  <xbrldi:explicitMember dimension="tse-ed-t:ConsolidatedNonconsolidatedAxis">tse-ed-t:ConsolidatedMember</xbrldi:explicitMember>
+  <xbrldi:explicitMember dimension="tse-ed-t:ResultForecastAxis">tse-ed-t:ForecastMember</xbrldi:explicitMember>
+</xbrli:segment></xbrli:entity><xbrli:period><xbrli:startDate>2027-04-01</xbrli:startDate><xbrli:endDate>2028-03-31</xbrli:endDate></xbrli:period></xbrli:context>
+</ix:resources></ix:header>
+<ix:nonFraction name="tse-ed-t:NetSales" contextRef="CurrentYearDuration_ConsolidatedMember_ResultMember" unitRef="JPY" scale="6" decimals="-6" format="ixt:numdotdecimal">1,234</ix:nonFraction>
+<ix:nonFraction name="tse-ed-t:OperatingIncome" contextRef="CurrentYearDuration_ConsolidatedMember_ResultMember" unitRef="JPY" scale="6" decimals="-6" sign="-" format="ixt:numdotdecimal">56</ix:nonFraction>
+<ix:nonFraction name="tse-ed-t:NetSales" contextRef="NextYearDuration_ConsolidatedMember_ForecastMember" unitRef="JPY" scale="6" decimals="-6" format="ixt:numdotdecimal">1,500</ix:nonFraction>
+<ix:nonFraction name="tse-ed-t:DividendPerShare" contextRef="NextYearDuration_ConsolidatedMember_ForecastMember" unitRef="JPY" decimals="2" format="ixt:numdotdecimal">12.50</ix:nonFraction>
+<ix:nonFraction name="tse-ed-t:NetIncomePerShare" contextRef="NextYearDuration_ConsolidatedMember_ForecastMember" unitRef="JPY" xsi:nil="true"></ix:nonFraction>
+<ix:nonFraction name="tse-ed-t:ChangeInNetSales" contextRef="PriorYearDuration_NonConsolidatedMember_ForecastMember" unitRef="Pure" scale="-2" decimals="3" format="ixt:numdotdecimal">７.５</ix:nonFraction>
+<ix:nonNumeric name="tse-ed-t:CompanyName" contextRef="CurrentYearDuration_ConsolidatedMember_ResultMember">架空工業</ix:nonNumeric>
+</body></html>
+"""
+
+
+def _zip(tmp_path, members):
+    path = tmp_path / "synthetic.zip"
+    with zipfile.ZipFile(path, "w") as zf:
+        for name, text in members.items():
+            zf.writestr(name, text.encode("utf-8"))
+    return path
+
+
+def test_parse_summary_lists_facts_with_forecast_helpers(tmp_path):
+    path = _zip(tmp_path, {
+        "XBRLData/Summary/tse-acedjpsm-99910-20270331-ixbrl.htm": IXBRL,
+        "XBRLData/Attachment/0101010-acbs01-tse-acedjpsm-99910-ixbrl.htm": IXBRL.replace("1,234", "999"),   # 非摘要，不读
+        "XBRLData/Summary/tse-acedjpsm-99910-20270331.xsd": "<schema/>",
+    })
+    facts = parse_summary(path)
+    assert len(facts) == 6
+    assert {f["doc_type"] for f in facts} == {"acedjpsm"}
+    by = {(f["local_name"], f["contextRef"]): f for f in facts}
+    sales = by[("NetSales", "CurrentYearDuration_ConsolidatedMember_ResultMember")]
+    assert sales["name"] == "tse-ed-t:NetSales"
+    assert (sales["unitRef"], sales["scale"], sales["sign"], sales["text"], sales["value"]) == ("JPY", "6", None, "1,234", 1_234_000_000.0)
+    assert (sales["is_forecast"], sales["result_forecast"], sales["period_end"]) == (False, "ResultMember", "2027-03-31")
+    assert sales["dimensions"]["ConsolidatedNonconsolidatedAxis"] == "ConsolidatedMember"
+    op = by[("OperatingIncome", "CurrentYearDuration_ConsolidatedMember_ResultMember")]
+    assert (op["sign"], op["value"]) == ("-", -56_000_000.0)
+    fc = by[("NetSales", "NextYearDuration_ConsolidatedMember_ForecastMember")]
+    assert (fc["is_forecast"], fc["result_forecast"], fc["value"]) == (True, "ForecastMember", 1_500_000_000.0)
+    assert by[("DividendPerShare", "NextYearDuration_ConsolidatedMember_ForecastMember")]["value"] == 12.5
+    nil = by[("NetIncomePerShare", "NextYearDuration_ConsolidatedMember_ForecastMember")]
+    assert (nil["is_nil"], nil["value"]) == (True, None)
+    # 文件内没有 context 定义时，按 contextRef 名称判断预想
+    fallback = by[("ChangeInNetSales", "PriorYearDuration_NonConsolidatedMember_ForecastMember")]
+    assert (fallback["is_forecast"], fallback["dimensions"], fallback["value"]) == (True, {}, pytest.approx(0.075))
+
+
+def test_parse_summary_without_summary_file(tmp_path):
+    assert parse_summary(_zip(tmp_path, {"XBRLData/Attachment/report.htm": "<html/>"})) == []
+
+
+def test_parse_summary_does_not_expand_external_entities(tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("99999", encoding="utf-8")
+    doc = (f'<?xml version="1.0"?><!DOCTYPE html [<!ENTITY x SYSTEM "{secret.as_uri()}">]>'
+           '<html xmlns:ix="http://www.xbrl.org/2008/inlineXBRL"><ix:nonFraction name="a" contextRef="c">&x;</ix:nonFraction></html>')
+    facts = parse_summary(_zip(tmp_path, {"tse-rvfc-99910-ixbrl.htm": doc}))
+    assert [f["value"] for f in facts] == [None]
