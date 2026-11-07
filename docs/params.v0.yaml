@@ -1,0 +1,292 @@
+# 日股全量扫描与组合构建工具 —— 参数与阈值 v0
+# 版本规则：语义化版本；任何修改须更新 version、changelog，并在文档「变更记录」中说明理由。
+# 所有金额单位：円；比率为小数；天数为交易日（除非注明）。
+# 证据等级（evidence_level）：institutional=制度依据, empirical=实证依据, heuristic=经验, hypothesis=假设
+version: "0.1.0"
+as_of: "2026-11-07"
+changelog:
+  - version: "0.1.0"
+    date: "2026-11-07"
+    note: "初版；全部数值为先验初值，待第 7 章验证流程校准"
+
+universe:
+  exchanges: ["TSE"]
+  markets: ["Prime", "Standard", "Growth"]          # J-Quants V2 Mkt 代码 0111 / 0112 / 0113
+  include_regional_exchanges: false                 # 名証/札証/福証 单独上市股
+  include_foreign_stocks: false                     # ProdCat 021/022/023/024
+  include_tokyo_pro_market: false                   # Mkt 0105
+  exclude_product_categories: ["012", "013", "014", "021", "022", "023", "024"]   # 優先出資証券/REIT/ETF/外国株等
+  exclude_preferred_by_code_suffix: true            # ProdCat 011 内的优先股用 5 位代码末位 != 0 判别
+  collect_full_history: true                        # 采集层：全部股票 x 全部可得历史（含已退市）
+  min_quarters_financials: 4                        # 数据充足：至少 4 个季度财务记录
+  stale_financials_days: 135                        # 最新短信距今超过此天数（自然日）标记 stale
+  new_listing:
+    observe_min_quarters: 2
+    observe_min_trading_days: 60
+    full_scoring_min_fiscal_years: 3
+
+liquidity:                                          # evidence_level: heuristic（工程约束）
+  participation_rate: 0.05                          # 单日成交参与率上限
+  exit_days: 5                                      # 可退出天数
+  core:
+    min_adv20_turnover_jpy: 50000000                # 20 日平均売買代金 >= 5,000 万円
+    min_mcap_jpy: 5000000000                        # 時価総額 >= 50 億円
+  watch:
+    min_adv20_turnover_jpy: 10000000
+    min_mcap_jpy: 2000000000
+  low_float_flag_ratio: 0.15                        # 浮動株比率 < 15% 标记
+  low_price_flag_jpy: 100                           # 低価株标记
+
+peer_group:
+  primary: "sector33"
+  fallback: ["sector17", "market"]
+  min_group_size: 20
+  self_history_window_days: 1250                    # 5 年
+  self_history_min_days: 500                        # 不足 2 年标记低置信
+  min_metric_coverage_for_confidence: 0.6
+
+value:                                              # evidence_level: empirical (H1), institutional (TSE 改革)
+  core_metrics: ["pbr", "per_fwd", "ev_ebitda", "fcf_yield"]
+  core_metric_pct: 0.30                             # 行业百分位 <= 30%
+  min_core_hits: 2
+  self_pct: 0.40                                    # PBR 自身 5 年百分位 <= 40%
+  strong:
+    pbr_max: 1.0
+    per_fwd_max: 10.0
+    ev_ebitda_max: 5.0
+    fcf_yield_min: 0.08
+    net_cash_ratio_min: 0.50
+  trap:                                             # 任一命中 -> 低估分 x multiplier
+    roe_3y_max: 0.05
+    rev_cagr_3y_max: 0.0
+    negative_ocf_years_of_3: 2
+    dividend_cut: true
+    equity_ratio_min_nonfin: 0.20
+    multiplier: 0.6
+  catalyst:                                         # 加分，总上限 cap
+    tse_capital_cost_disclosure_with_targets: 10
+    buyback_announced_12m: 5
+    activist_holding_5pct: 10
+    cross_holding_reduction_or_payout_policy: 5
+    cap: 15
+  weights:
+    core_block: 0.7                                 # V1-V4
+    support_block: 0.3                              # V5-V8
+  financial_sector_metrics: ["pbr", "div_yield_fwd", "roe_3y", "equity_ratio"]
+
+oversold:                                           # evidence_level: empirical(短期反转) + hypothesis(条件化)
+  trigger:
+    drawdown_pct: 0.20
+    drawdown_pct_large_cap: 0.15
+    large_cap_mcap_jpy: 300000000000                # 3,000 億円
+    drawdown_window_days: 20
+    high_lookback_days: 60
+    single_day_pct: 0.10
+    single_day_pct_large_cap: 0.08
+    volume_mult_vs_adv20: 3.0
+    five_day_pct: 0.15
+  attribution:
+    event_window_before_days: 5
+    event_window_after_days: 1
+    systemic_ratio: 0.667                           # 行业/指数跌幅 >= 个股跌幅 x 2/3 -> 系统型
+  intact_tests:
+    required_pass: 3                                # 五项通过 >= 3
+    f1_guidance_cut_max: 0.10
+    f2_progress_tolerance: 0.05
+    f4_equity_ratio_min: 0.30
+    f4_net_debt_ebitda_max: 2.0
+    hard_fail: ["ms_warrant", "negative_equity", "delisting_decided", "supervision_designation", "going_concern_note"]
+  overreaction:
+    eps_change_floor: 0.05
+    ratio_threshold: 2.0
+  stabilization:
+    above_low_days: 3
+    atr5_decline_from_peak: 0.30
+    volume_normal_mult: 1.5
+    volume_normal_days: 3
+    margin_long_increase_max: 0.50
+    validity_days: 60
+  score:
+    overreaction_max: 40
+    intact_per_test: 10
+    stabilization_per_signal: 5
+    event_type_cap: {T2: 70, T3: 70}
+
+growth:                                             # evidence_level: empirical(H2) + heuristic(進捗率)
+  rev_cagr_3y_min: 0.08
+  op_cagr_3y_min: 0.10
+  op_growth_fwd_min: 0.10
+  ocf_to_op_3y_min: 0.70
+  progress_dev_min: 0.05                            # 進捗率偏差 >= +5pp
+  upward_revisions_3y_min: 2
+  actual_vs_initial_forecast_min: 1.05
+  downgrade:
+    wc_growth_minus_rev_growth_max: 0.10            # (売上債権+棚卸) 增速 - 売上增速 > 10pp -> 降级
+    op_margin_decline_years: 2
+  progress_quarter_weights: {Q1: 0.5, Q2: 1.0, Q3: 0.8}
+  weights: {realized: 0.4, expected: 0.4, quality: 0.2}
+  high_growth_loss_bucket:
+    enabled: false
+    rev_cagr_min: 0.30
+    gross_margin_min: 0.50
+    cash_runway_months_min: 24
+
+quality:                                            # evidence_level: empirical(H5) + institutional(ROE 8%)
+  roe_3y_good: 0.08
+  roe_3y_bad: 0.05
+  roic_good: 0.07
+  op_margin_std_5y_good: 0.03
+  equity_ratio_good: 0.30
+  equity_ratio_strong: 0.40
+  equity_ratio_bad: 0.20
+  net_debt_ebitda_good: 2.0
+  net_debt_ebitda_bad: 4.0
+  interest_coverage_good: 5.0
+  accrual_ratio_good: 0.10
+  accrual_ratio_bad: 0.20
+  positive_ocf_years_required: 2                    # 最近 3 年中至少 2 年；3/3 为良
+  gate:                                             # 进入核心篮子的必要条件
+    equity_ratio_min_nonfin: 0.30
+    positive_ocf_years_min: 2
+    no_red_flags: true
+  weights: {profitability: 0.4, balance_sheet: 0.3, earnings_quality: 0.2, payout_governance: 0.1}
+  red_flags: ["improper_accounting", "third_party_committee_open", "adverse_or_disclaimer_opinion",
+              "frequent_auditor_change", "earnings_release_delay", "listing_maintenance_breach",
+              "ms_warrant", "dilution_ge_10pct", "negative_equity", "going_concern_note"]
+
+trend:                                              # evidence_level: empirical(H4: 日本动量偏弱 -> 低权重)
+  ma_windows: [25, 75, 200]
+  rs_windows_days: [21, 63, 126]
+  high_52w_days: 250
+  volume_ratio_windows: [20, 120]
+  atr_window: 14
+  realized_vol_window: 60
+  beta_window: 250
+  margin_ratio_warn: 10.0
+  margin_days_to_unwind_warn: 10
+  score_blocks: {stage: 40, relative_strength: 30, volume_supply: 30}
+
+news:                                               # evidence_level: heuristic(H7)
+  source_weights: {L1: 1.0, L2: 0.6, L3: 0.3, L4: 0.0}
+  half_life_days: {short: 20, medium: 60, long: 120}
+  raw_score_clip: 100
+  negative_event_cap_rule: {window_days: 30, min_negative_l1_events: 2, news_score_cap: 40}
+  # 事件强度与半衰期见附录 D / events.yaml
+
+exclusions:
+  hard: ["X01_non_common_stock", "X02_supervision_or_liquidation", "X03_going_concern",
+         "X04_improper_accounting", "X05_audit_opinion_or_delay", "X06_ms_warrant",
+         "X07_negative_equity", "X08_illiquid", "X09_insufficient_data",
+         "X10_listing_maintenance_breach", "X11_tob_price_reached"]
+  soft:
+    S01_low_float_or_parent_control: {float_ratio_max: 0.15, parent_holding_min: 0.60, position_cap_multiplier: 0.5}
+    S02_margin_overhang: {margin_ratio_min: 10.0, days_to_unwind_min: 10}
+    S03_pre_earnings_window_days: 5
+    S04_recent_equity_issuance_months: 12
+    S04_value_multiplier: 0.8
+    S05_negative_events: {window_days: 30, count_min: 2, news_cap: 40}
+    S06_financial_sector_growth_bucket: false
+    S07_low_price_jpy: 100
+  tob_min_upside: 0.03
+
+bucket:
+  top_n: 40
+  B1_value_reversal:
+    weights: {value: 0.35, quality: 0.25, growth: 0.10, oversold: 0.10, trend: 0.10, news: 0.10}
+    entry: ["value_candidate", "quality_gate"]
+  B2_quality_growth:
+    weights: {value: 0.15, quality: 0.25, growth: 0.35, oversold: 0.0, trend: 0.15, news: 0.10}
+    entry: ["growth_candidate", "quality_gate", "per_fwd_sector_pct_max_0.70"]
+  B3_oversold_recovery:
+    weights: {value: 0.20, quality: 0.25, growth: 0.10, oversold: 0.35, trend: 0.0, news: 0.10}
+    entry: ["oversold_candidate", "intact_tests_passed"]
+  B0_special_situations:
+    scored: false
+
+ai:
+  adjustment_cap: 10                                # AI 对各维度分的调整上限（正负）
+  samples_for_key_judgments: 3
+  number_mismatch_tolerance: 0.01
+  citation_hit_rate_target: 0.98
+  number_consistency_target: 0.99
+  classification_agreement_target: 0.90
+  attribution_disagreement_max: 0.15
+  models:
+    deep_analysis: "claude-opus-5-5"
+    bulk_classification: "claude-sonnet-5-5"
+    bulk_cheap: "claude-haiku-5-5"
+  use_batches_for_bulk: true
+
+targets:                                            # 估值区间与买卖点
+  fair_value_methods: ["pbr_reversion", "per_reversion", "ev_ebitda_reversion"]
+  pbr_roe_adjust_threshold: 0.08
+  peg_cap: 1.5
+  scenario:
+    bear: {quantile: 0.25, earnings_adj: -0.10}
+    base: {quantile: 0.50, earnings_adj: 0.0}
+    bull: {quantile: 0.75, earnings_adj: 0.10}
+  safety_margin: {B1: 0.25, B2: 0.20, B3: 0.30}
+  tranches: [0.4, 0.3, 0.3]
+  no_entry_pre_earnings_days: 5
+  exit:
+    trim_at_base_fraction: 0.5
+    guidance_cut_stop: 0.20
+    progress_dev_stop_pp: -0.10
+    progress_dev_stop_quarters: 2
+    atr_stop_mult: 2.5                              # B2/B3
+    time_stop_months: 12
+    time_stop_underperf_vs_topix: 0.20
+
+portfolio:
+  n_positions: {min: 15, max: 30}
+  initial_weight: {min: 0.03, max: 0.05}
+  max_single: 0.07
+  max_sector17: 0.25
+  max_growth_market: 0.20
+  bucket_allocation: {B1: 0.5, B2: 0.3, B3: 0.2}
+  bucket_tilt_max: 0.15
+  cash_buffer: {min: 0.05, max: 0.30}
+  monthly_turnover_cap: 0.20
+  weighting: "tiered_equal_vol_adjusted"
+  top_tier_n: 10
+  top_tier_multiplier: 1.2
+  vol_window: 60
+
+regime:
+  update: "weekly"
+  indicators:
+    topix_vs_ma200: true
+    breadth_above_ma200: true
+    jgb10y_level_and_6m_change: true
+    usdjpy_6m_change: true
+    volatility_topix_realized_20d: true     # 日経VI 免费 CSV 仅近 3 年且禁止蓄積，作人工参考
+    style_6m_value_vs_growth_small_vs_large: true
+  mapping:                                          # 环境 -> 参数
+    risk_on:  {cash_buffer: 0.05, bucket_tilt: {B2: 0.10, B1: -0.05, B3: -0.05}, atr_stop_mult: 2.5}
+    neutral:  {cash_buffer: 0.10, bucket_tilt: {}, atr_stop_mult: 2.5}
+    risk_off: {cash_buffer: 0.25, bucket_tilt: {B1: 0.10, B3: 0.05, B2: -0.15}, atr_stop_mult: 2.0}
+  thresholds:
+    risk_off: {topix_below_ma200: true, breadth_max: 0.35}
+    risk_on: {topix_above_ma200: true, breadth_min: 0.60}
+
+validation:
+  rebalance: "monthly"
+  cost_one_way: {high_liquidity: 0.001, mid: 0.002, low: 0.003}
+  no_fill_on_limit_days: true
+  max_volume_participation: 0.05
+  holdout_years: 2
+  scenario_coverage_target: {min: 0.70, max: 0.80}
+  param_cooldown_quarters: 1
+  benchmarks: ["TOPIX_TR", "TSE_size_indices", "simple_value_growth_style"]
+
+data_sources:                                       # 采集层开关（细则见第 3、10 章）
+  jquants:
+    api_version: "v2"
+    base_url: "https://api.jquants.com/v2/"
+    plan: "Free"                                    # 当前密钥为 Free（2 年窗口、12 周延迟、5 req/分）；实盘日更建议升级 Standard；可用环境变量 JQUANTS_PLAN 覆盖
+    respect_rate_limits: true
+    retain_raw_after_cancellation: false            # 利用規約：解約后须删除数据
+  jpx_files: {enabled: true}
+  edinet_api: {enabled: true}
+  tdnet: {enabled: true, mode: "daily_list_and_pdf"}
+  news: {enabled: true, l1_only_for_scoring: true}
