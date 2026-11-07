@@ -2061,7 +2061,7 @@ bucket_policy:
   required_when_covered: "覆盖率达到 coverage_floor 时必须 hit；不足时放行并标记低置信，同时写明未检查。"
   at_least_one_of: "其中至少一个家族 hit；unknown 不算。全部低于 coverage_floor 时放行并标记低置信。"
   must_not_fail: "这些家族不得为 fail；unknown 放行，但列入未检查。"
-  delay_note: "Free 上价格和财务都晚 12 周。delay_sensitive=true 的篮子在 Free 上只作研究和回放，不能代表今天的状态。"
+  delay_note: "Free 上价格和财务都晚 12 周。delay_sensitive=true 的篮子在 Free 上只作研究和回放，不能代表今天的状态。B1 的 must_not_fail 和确认条件都依赖 30、60 日窗口，Free 上 must_not_fail 对最近 12 周未检查，报告必须列出；估值判断本身可继续作研究使用。"
 
 buckets:
   B1:
@@ -2073,7 +2073,8 @@ buckets:
     must_not_fail: [business_quality, guidance_change]
     gates: [hard, soft]
     excluded_sectors: [保険業]
-    delay_sensitive: false
+    excluded_markets: [Growth]    # 这是判断，不是覆盖率：回填后 Growth 的估值覆盖已过 0.60，不写明就会自动启动
+    delay_sensitive: true
     why: "G2-06、G2-07 与 Chou-Ko-Rhee 2023 都指向价值要与盈利或指引合用；G2-17 显示低 PBR 上修后更强。"
     measured_liquid_core: {total: 186, Prime: 164, Standard: 22, Growth: 0, note: "Growth 因覆盖不足暂停；只含 shareholder_yield 与 guidance_change 两个确认家族"}
   B2:
@@ -2225,6 +2226,8 @@ sector_overrides:
     family_changes: {}
     gates_off: []
     traps_zh: "约 22% IFRS，跨准则比较打折扣。"
+
+market_keys: {Prime: "0111", Standard: "0112", Growth: "0113"}   # market_overrides、excluded_markets 的键对应 security_master.Mkt
 
 market_overrides:
   Growth:
