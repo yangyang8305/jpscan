@@ -436,7 +436,7 @@ metrics:
     free_plan_note: "公式可算，但读取时有 2 个 FY 的公司极少，须等回填到 2025-05 后重测。已可测的水平项通过率（非金融有 FY 行者）：NP>0 90%、CFO>0 87%、CFO>NP 71%，63% 三项全过，再过 2 个差分项就到 5 分。TrShFY 空白很可能表示 0（未确认）。"
     stale_on_free: false
     unlocks_with: "回填到 2025-05；无需付费"
-    sector_rules: "银行、保险、证券、其他金融不适用（CFO、Sales 缺失或无意义）。不动产的 CFO 两项读法不同。决算期变更 fy_months≠12 须折算。"
+    sector_rules: "银行、保险、证券、其他金融不适用（CFO、Sales 缺失或无意义）。不动产的 CFO 两项读法不同。决算期变更（FY 天数不在 350-380）须折算。"
     status: score
     planned_status: score
     evidence_strength: moderate
@@ -1655,10 +1655,10 @@ metrics:
     plain_zh: "增长是公司自己做出来的，还是并购或决算期变更造成的账面变化。"
     purpose: quality_risk
     direction: flag
-    formula: "SigChgInC=true 或 fy_months≠12 时，同比增长与 F-Score 的差分项降级并提示人工查。"
-    data_needed: "financial_statements.SigChgInC, fy_months"
+    formula: "FY 天数（CurFYEn−CurFYSt+1）不在 350-380 时，同比增长与 F-Score 的差分项降级并提示人工查；SigChgInC=true 只有在 |TA 同比|>=20% 时才降级，其余只展示。"
+    data_needed: "financial_statements.SigChgInC, CurFYSt, CurFYEn, TA"
     available_on_free_plan: true
-    free_plan_note: "SigChgInC=true 602 条（非空约 20%），fy_months≠12 有 55 条。SigChgInC 含义由字段名推断，需对照 API 文档确认。"
+    free_plan_note: "SigChgInC=true 占最新文档 17%，窗口内曾为 true 的公司 31%，不加幅度条件会影响五分之一以上公司；含义由字段名推断，需对照 API 文档确认。staging 的 fy_months 有错：2025-03-21 至 2026-03-20 这样的正常财年被算成 13（全部 365 天左右），须负责模块修复，这里改用天数。"
     stale_on_free: false
     unlocks_with: null
     sector_rules: "无。"
