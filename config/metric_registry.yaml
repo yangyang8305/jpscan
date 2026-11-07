@@ -1189,18 +1189,18 @@ metrics:
     plain_zh: "股价大跌但当时没有公司新闻的股票，反弹远比有坏消息的股票明显。"
     purpose: mispricing_oversold
     direction: flag
-    formula: "rev_1m 命中，且窗口内最大单日相对跌幅日前后 ±1 日无决算文档（DiscDate、earnings_calendar.SchDate）、无 staging.disclosures 事件。TDnet 缺失时只算决算代理，并写明「只排除了决算新闻」。"
-    data_needed: "prices_daily；financial_statements.DiscDate；earnings_calendar；staging.disclosures"
+    formula: "rev_1m 命中，且窗口内最大单日相对跌幅日前后 ±1 日无决算文档（DiscDate、earnings_calendar.SchDate）、无 staging.disclosures 事件。staging.disclosures 未覆盖窗口时结果为 unknown。最大跌幅日的 +1 日在计算日 t 尚未观测时结果也为 unknown，回测不得使用 t 之后的信息。"
+    data_needed: "prices_daily；financial_statements.DiscDate；earnings_calendar（只有 2026-06 起，历史回测只能用 PubDate<=t 的记录）；staging.disclosures"
     available_on_free_plan: true
-    free_plan_note: "只有决算代理。实测决算季跌幅>=10% 的股日只有 38% 在 ±1 日内有财务文档，其余至少 62% 须靠 TDnet 才能分清。"
+    free_plan_note: "TDnet 缺失时只能排除决算新闻。实测 2026-08-14 核心池 192 个 rev_1m 命中中 90 个（47%）近旁没有决算文档，增资、丑闻、优待废止等坏消息的公司也在其中，若因此提高排序就是把缺失当通过。决算季跌幅>=10% 的股日只有 38% 在 ±1 日内有财务文档。"
     stale_on_free: true
     unlocks_with: "TDnet 每日采集（免费，错过的日子免费补不回来）；历史需 J-Quants TDnet 附加包"
     sector_rules: "无。"
-    status: score
+    status: display
     planned_status: score
-    evidence_strength: moderate
+    evidence_strength: weak
     evidence: "Tsukioka 等 2017（JSAI 会议论文，1985-2010，数字表文本错位，全样本约 135% vs 45%，高频调仓的毛收益，不可直接交易）https://www.ai-gakkai.or.jp/jsai2017/webprogram/2017/paper-583.html ；Bremer 等 1997（已读摘要，作者判断普通投资者难以获利）https://www.cambridge.org/core/journals/journal-of-financial-and-quantitative-analysis/article/predictable-patterns-after-large-stock-price-changes-on-the-tokyo-stock-exchange/7EA5B0921EC83DDAEA4860FC279372AE 。样本止于 2010，后续复现未找到。"
-    why: "对草案的方向性修正：归因表把无明确原因当作缺口，文献提示它可能是最好的一类，业绩型反而可能继续下跌。它只提高 rev_1m 命中者的排序，不算独立的第二次命中。回测只能用代理，须披露。"
+    why: "对草案的方向性修正：归因表把无明确原因当作缺口，文献提示它可能是最好的一类。但证据只有会议论文和老样本，现在又分不清有没有消息，所以只展示。接入 TDnet 后走 promotion_rule 检验；转正时再写明提高排序的具体数值，它不算第二次命中。"
 
   - id: rev_drawdown_triggers
     family: price_dislocation
@@ -2016,17 +2016,15 @@ families:
 
   price_dislocation:
     name_zh: "价格错位"
-    question_zh: "它最近是不是比同行跌得特别多，而且不像是有坏消息？"
+    question_zh: "它最近是不是比同行跌得特别多？"
     metrics: [rev_1m]
-    conditional_metrics: [rev_no_news_loser]
-    planned_metrics: []
+    planned_metrics: [rev_no_news_loser]
     absence_means: no_signal
     threshold:
       min_known: 1
       min_hits: 1
       hit_rules:
         - {metric: rev_1m, rule: universe_best_pct, value: 0.10}
-    conditional_note: "rev_no_news_loser 不算第二次命中，只提高已命中者的排序。"
     fail_rule: null
     measured:
       known_share: {Prime: 1.00, Standard: 1.00, Growth: 0.99}
