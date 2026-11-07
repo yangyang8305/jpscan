@@ -1881,3 +1881,151 @@ metrics:
     evidence: "G2-04：SMB 2013-2025 约 0.5%/年；G2-20；G2-21（描述数字）；MSCI 均等权重 2020s −3.5%/年。覆盖度与后续收益的日本直接研究未找到。"
     why: "不应给小盘加分。它的价值在于作其他信号的条件。"
 
+# ---------- 证据家族 ----------
+# 一个家族回答一个问题。家族之间要尽量独立；同一家族内的指标可以相关，它们合起来只算一份证据。
+# 判定结果四选一：
+#   hit     达到阈值
+#   miss    已知但未达到
+#   fail    触发 fail_rule（只有部分家族有）
+#   unknown 已知指标数少于 min_known。unknown 绝不算 hit，也绝不算 miss。
+# absence_means：没有事件时算什么。no_signal 表示没有事件就是 miss；unknown 表示数据本身可能缺失。
+# hit_rules.rule：
+#   peer_best_pct    在同业（params.peer_group：S33，不足 20 只回退 S17）内排在最好的前 value 比例
+#   group_best_pct   在 group 指定的分组内排在最好的前 value 比例，窗口 window_days 个交易日
+#   universe_best_pct 在全市场排在最好的前 value 比例
+#   min_value        指标值 >= value
+#   event_up_top_pct 窗口内上调事件中，幅度排在前 value 比例；变动小于 noise_floor 不算事件
+#   any_up_event     窗口内出现一次上调
+#   min_reduction    指标值 >= value，只作是否判断，不作连续排序
+# 阈值全部是先验：30% 沿用 params.value.core_metric_pct；不按任何收益结果调过。
+family_policy:
+  coverage_floor: 0.60          # 沿用 params.peer_group.min_metric_coverage_for_confidence；按市场分别计算
+  ranking: "同一篮子内，按该股命中家族的指标同业分位等权平均排序；不按文献数字或样本内结果拟合权重。"
+  note: "覆盖率低于 coverage_floor 的家族不能作必要条件，处理方式见 bucket_policy。每次运行重新计算覆盖率，回填或接入新数据后自动生效，无需改表。"
+
+families:
+  relative_value:
+    name_zh: "相对估值"
+    question_zh: "考虑赚钱能力和同业之后，它便宜吗？"
+    metrics: [val_pbr_roe_residual, val_fwd_ep, val_ocf_yield]
+    planned_metrics: [val_self_pbr_pct]
+    benchmark_metric: val_pbr
+    absence_means: unknown
+    threshold:
+      min_known: 2
+      min_hits: 2
+      hit_rules:
+        - {metric: val_pbr_roe_residual, rule: peer_best_pct, value: 0.30}
+        - {metric: val_fwd_ep, rule: peer_best_pct, value: 0.30, unless_gate: gate_one_off}
+        - {metric: val_ocf_yield, rule: peer_best_pct, value: 0.30}
+    fail_rule: null
+    measured:
+      known_share: {Prime: 0.94, Standard: 0.90, Growth: 0.15}
+      hits_all: 679
+      hits_liquid_core: 317
+    independence_note: "所选的对数口径残差与 E/P 秩相关 0.77，数学上相关，因此要求 2 项一起命中只是提高可靠性，不算两份证据。现金流收益率回填后是相对独立的第三条腿。Growth 不计残差，读取时只有 15% 的公司同时有 E/P 和现金流，暂时算不出。"
+    evidence_summary: "价值是日本证据最多的方向（moderate 到 strong），但 2010 年后单独回报明显变弱，所以不单独成篮：见 B1 的确认条件。"
+
+  shareholder_yield:
+    name_zh: "股东回报"
+    question_zh: "公司实际还给股东多少现金？"
+    metrics: [yield_dividend, yield_net_payout]
+    planned_metrics: []
+    absence_means: unknown
+    threshold:
+      min_known: 1
+      min_hits: 1
+      hit_rules:
+        - {metric: yield_dividend, rule: peer_best_pct, value: 0.30, unless_gate: gate_div_cover}
+        - {metric: yield_net_payout, rule: peer_best_pct, value: 0.30}
+    fail_rule: null
+    measured:
+      known_share: {Prime: 0.92, Standard: 0.91, Growth: 0.93}
+      hits_all: 989
+      hits_liquid_core: 566
+    independence_note: "与 E/P 秩相关 0.43，与残差 0.38；命中名单与 relative_value 的 Jaccard 0.25（核心池）。有重叠，但并非同一批公司。"
+    evidence_summary: "moderate：长期稳定，主要证据来自指数和卖方。"
+
+  business_quality:
+    name_zh: "经营质量"
+    question_zh: "生意本身赚不赚钱、有没有在变好？"
+    metrics: [qual_fscore7, qual_op_profitability]
+    planned_metrics: []
+    absence_means: unknown
+    threshold:
+      min_known: 1
+      min_hits: 1
+      hit_rules:
+        - {metric: qual_fscore7, rule: min_value, value: 5}
+        - {metric: qual_op_profitability, rule: peer_best_pct, value: 0.30}
+    fail_rule: "qual_fscore7 <= 2（至少 5 项可算）"
+    measured:
+      known_share: {Prime: 0.08, Standard: 0.13, Growth: 0.18}
+      hits_all: null
+      hits_liquid_core: null
+    independence_note: "OP/TA 与 B/M 秩相关 −0.30，与文献的价值、质量负相关一致，所以和估值搭配才有分散意义。"
+    evidence_summary: "moderate 且有冲突：指数层面质量单独很弱，特征回归显示与价值合用有增量。读取时大部分未知，现在不能作必要条件，回填到 2025-05 后自动生效。"
+
+  guidance_change:
+    name_zh: "指引变化"
+    question_zh: "公司对未来利润的说法刚刚变好了吗？"
+    metrics: [guid_forecast_innovation, guid_revision_event]
+    planned_metrics: [guid_bias, guid_q_sue, guid_earnings_reaction]
+    absence_means: no_signal
+    threshold:
+      min_known: 1
+      min_hits: 1
+      hit_rules:
+        - {metric: guid_forecast_innovation, rule: group_best_pct, group: gaap, value: 0.30, window_days: 60}
+        - {metric: guid_revision_event, rule: event_up_top_pct, value: 0.30, window_days: 30, noise_floor: 0.01}
+    fail_rule: "30 个交易日内 guid_revision_event 下调超过 noise_floor；或 60 个交易日内 guid_forecast_innovation 落在最差 30%"
+    measured:
+      known_share: {Prime: 0.95, Standard: 0.94, Growth: 0.85}
+      hits_all: 236
+      hits_liquid_core: 100
+      fails_liquid_core: 80
+    independence_note: "隐含净利变动与估值、质量、股息的秩相关都不超过 0.23，与 1 个月跌幅 −0.27。"
+    evidence_summary: "翌期指引是最强的日本专属信号（strong），期中修正 moderate。窗口短于 Free 的 12 周延迟，Free 上只能研究。"
+
+  capital_action:
+    name_zh: "资本行动"
+    question_zh: "公司最近有没有用真金白银回报股东？"
+    metrics: [evt_dividend_change, evt_net_share_reduction]
+    planned_metrics: [evt_buyback]
+    absence_means: unknown
+    threshold:
+      min_known: 1
+      min_hits: 1
+      hit_rules:
+        - {metric: evt_dividend_change, rule: any_up_event, window_days: 30}
+        - {metric: evt_net_share_reduction, rule: min_reduction, value: 0.01}
+        - {metric: evt_buyback, rule: min_value, value: 0.01, window_days: 30, active_when: "staging.disclosures 有数据"}
+    fail_rule: null
+    measured:
+      known_share: {note: "配当修正可算；回购公告 0%（TDnet 尚未入库）；股数变化须回填到上年同期。未测全家族覆盖率。"}
+      hits_all: null
+      hits_liquid_core: null
+    independence_note: "evt_net_share_reduction 与 yield_net_payout 用同一份股数变化；evt_buyback 启用后前者转为展示。"
+    evidence_summary: "回购规模证据 strong 但数据缺失，配当修正 moderate。这是目前最大的一块「证据强但拿不到」，只作可选确认，不作必要条件。"
+
+  price_dislocation:
+    name_zh: "价格错位"
+    question_zh: "它最近是不是比同行跌得特别多，而且不像是有坏消息？"
+    metrics: [rev_1m]
+    conditional_metrics: [rev_no_news_loser]
+    planned_metrics: []
+    absence_means: no_signal
+    threshold:
+      min_known: 1
+      min_hits: 1
+      hit_rules:
+        - {metric: rev_1m, rule: universe_best_pct, value: 0.10}
+    conditional_note: "rev_no_news_loser 不算第二次命中，只提高已命中者的排序。"
+    fail_rule: null
+    measured:
+      known_share: {Prime: 1.00, Standard: 1.00, Growth: 0.99}
+      hits_all: 369
+      hits_liquid_core: 207
+    independence_note: "与所有估值、质量指标的行业内秩相关绝对值不超过 0.15。"
+    evidence_summary: "moderate：存在性好，样本老，近期扣成本后是否还在未知。10% 取自文献的最低十分位，不是调出来的。"
+
