@@ -372,3 +372,245 @@ metrics:
     evidence: "实测见 sector_rules：这些标签主要在标注行业。"
     why: "会误导不熟悉行业的使用者。一律改用行业内分位。"
 
+  # ---------- 股东回报 ----------
+  - id: yield_dividend
+    family: shareholder_yield
+    aliases: [V5, DIV_YIELD]
+    name_zh: "予想配当利回り"
+    plain_zh: "按公司预告的分红，每年能拿回股价的百分之几。"
+    purpose: undervaluation
+    direction: higher_better
+    formula: "FDivAnn（FY 行用 NxFDivAnn）/ C。0 表示不分红，算未命中；空表示未定，算未知，不得把空当 0。"
+    data_needed: "financial_statements.FDivAnn, NxFDivAnn；prices_daily.C"
+    available_on_free_plan: true
+    free_plan_note: "读取时已知 Prime 92%、Standard 91%、Growth 93%；预告零分红 Prime 2%、Standard 10%、Growth 58%。記念配当从字段看不出来，需 TDnet 文本。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "Growth 大多不分红，不参与此项。分割前后每股分红要按 AdjFactor 调整。"
+    status: score
+    planned_status: score
+    evidence_strength: moderate
+    evidence: "MSCI 2026-08（1999-2026，大中盘指数，部分为回测）：日本高配当约 4%/年超额，2020s 仍在上位 https://www.msci.com/www/blog-posts/-/07090170150 ；G2-34（2005-2025）；G2-24。主要证据来自指数和卖方，不是严谨横截面检验。实测与 E/P 行业内秩相关 0.43，与估值家族命中名单的 Jaccard 0.25（核心池），算相对独立。"
+    why: "日本少有的长期稳定信号。必须配合 gate_div_cover：高股息前 10% 中 15% 派息率超过 100%。"
+
+  - id: yield_net_payout
+    family: shareholder_yield
+    aliases: [NET_PAYOUT]
+    name_zh: "净股东回报率"
+    plain_zh: "过去一年公司通过分红和回购净还给股东多少钱，占市值的比例。"
+    purpose: undervaluation
+    direction: higher_better
+    formula: "(DivTotalAnn + 回购估算 − 增发估算)/(MktCap*1e6)；回购或增发估算 = −Δ(ShOutFY−TrShFY)*期间均价，Δ 须用 AdjFactor 还原分割。"
+    data_needed: "financial_statements.DivTotalAnn, ShOutFY, TrShFY（2 个财年）；prices_daily.AdjFactor"
+    available_on_free_plan: true
+    free_plan_note: "FY 行 DivTotalAnn 73%、TrShFY 89%。读取时只有 6 家有 2 个 FY，须等回填；Free 全程只有 1 个变化点。"
+    stale_on_free: false
+    unlocks_with: "回填到 2025-05；更长历史需 J-Quants Light 以上"
+    sector_rules: "金融业可算，但回购常受规制资本约束，读法不同。"
+    status: score
+    planned_status: score
+    evidence_strength: moderate
+    evidence: "Walkshäusl 2016（国际样本，控制规模、BM、动量、投资、盈利后仍显著，已读摘要，未见日本单列）https://ideas.repec.org/a/pal/assmgt/v17y2016i1d10.1057_jam.2015.34.html ；G2-34：回购持续性低于股息。"
+    why: "比股息率多抓回购并扣减增发，契合 2023 年后的回购潮。估算粗，先与股息率并列检验；它与 evt_net_share_reduction 用同一份股数变化，后者只在 TDnet 缺失时替代回购公告。"
+
+  # ---------- 经营质量 ----------
+  - id: qual_fscore7
+    family: business_quality
+    aliases: [F-Score]
+    name_zh: "简化 Piotroski F-Score（7 项）"
+    plain_zh: "用 7 个是非题给公司财务状况的变化打分：赚钱吗？现金流为正吗？在改善吗？有没有增发？"
+    purpose: quality_risk
+    direction: higher_better
+    formula: "7 项相加（用最近两个 FY）：NP/TA>0；CFO>0；Δ(NP/TA)>0；CFO>NP；Δ(ShEq/TA)>0；还原分割后 ShOutFY−TrShFY 未增加；Δ(Sales/TA)>0。至少 5 项可算才有效，按 分数/可算项数*7 折算。原版的流动比率与毛利率两项 Free 无法计算。"
+    data_needed: "financial_statements.NP, CFO, TA, ShEq, Sales, ShOutFY, TrShFY（2 个 FY）；prices_daily.AdjFactor"
+    available_on_free_plan: true
+    free_plan_note: "公式可算，但读取时有 2 个 FY 的公司不足 1%，须等回填到 2025-05 后重测。TrShFY 空白很可能表示 0（未确认）。"
+    stale_on_free: false
+    unlocks_with: "回填到 2025-05；无需付费"
+    sector_rules: "银行、保险、证券、其他金融不适用（CFO、Sales 缺失或无意义）。不动产的 CFO 两项读法不同。决算期变更 fy_months≠12 须折算。"
+    status: score
+    planned_status: score
+    evidence_strength: moderate
+    evidence: "Walkshäusl 2020（全文已读，2000-2018，日本 2328 家）：亚太回归 FSCORE 斜率 0.079、t=3.9，高低组约 0.39%/月，大盘组 0.29%/月（t=2.4）https://epub.uni-regensburg.de/44019 。局限：日本未单列，用的是完整 9 项；7 项版未经检验。日本单独的学术研究未找到。"
+    why: "草案没有这项。一个分数同时处理价值陷阱和基本面改善，Free 数据基本可算，是最值得新增的指标之一。"
+
+  - id: qual_op_profitability
+    family: business_quality
+    aliases: [N9, RMW]
+    name_zh: "营业盈利能力 OP/TA"
+    plain_zh: "公司用全部资产每年能赚出多少本业利润，不受杠杆影响。"
+    purpose: quality_risk
+    direction: higher_better
+    formula: "op_ttm（OP 期初累计差分，FY 行直接用 OP）/ 平均 TA"
+    data_needed: "financial_statements.OP, TA, CurPerType"
+    available_on_free_plan: true
+    free_plan_note: "OP、TA 在决算文档都有，但 TTM 需要上年同期；读取时有 FY 行的只有 Prime 8%、Standard 13%、Growth 18%。"
+    stale_on_free: false
+    unlocks_with: "回填到 2025-06；无需付费"
+    sector_rules: "金融业不适用。五大商社 FOP 全空、OP 部分为空，改用 NP/TA。"
+    status: score
+    planned_status: score
+    evidence_strength: moderate
+    evidence: "结论有冲突。支持：Chou-Ko-Rhee 2023；Walkshäusl 2020 OP 斜率 0.211、t=4.7（等权，日本未单列）。不支持：G2-02、G2-03、G2-12；MSCI Quality 指数略输大盘。实测与 B/M 行业内秩相关 −0.30（用累计值粗算），与文献的价值、质量负相关一致。"
+    why: "对假设 H5 的修正：质量单独作因子确实弱，但与价值合用时有增量且负相关。研究一方主张打分、数据一方主张只去劣，此处作为确认条件（不单独选股），不作主排序。"
+
+  - id: qual_gross_profit
+    family: business_quality
+    aliases: [GPA]
+    name_zh: "毛利/总资产"
+    plain_zh: "扣掉直接成本后的利润相对资产有多高。"
+    purpose: quality_risk
+    direction: higher_better
+    formula: "(Sales − 売上原価) / TA"
+    data_needed: "売上原価：Free 没有"
+    available_on_free_plan: false
+    free_plan_note: "Free 无売上原価。"
+    stale_on_free: false
+    unlocks_with: "EDINET 財務諸表（免费）"
+    sector_rules: "金融业不适用。"
+    status: excluded
+    planned_status: display
+    evidence_strength: moderate
+    evidence: "Liu & Yadohisa 2018（1994-2016，期刊层次一般）：毛利率与 B/M 双排序跑赢 https://ideas.repec.org/a/ibn/ijefaa/v10y2018i5p254-260.html 。TOPIX 2010s 严格复现未找到。"
+    why: "OP/TA 已覆盖大部分含义，不值得为此单独付费。有 EDINET 后检验增量。"
+
+  - id: qual_accruals
+    family: business_quality
+    aliases: [Q7, DOC_Q7_ACCRUAL]
+    name_zh: "应计比率"
+    plain_zh: "账面利润里有多少没有变成现金。"
+    purpose: quality_risk
+    direction: lower_better
+    formula: "(NP − CFO) / 平均 TA，用 FY。"
+    data_needed: "financial_statements.NP, CFO, TA（FY）"
+    available_on_free_plan: true
+    free_plan_note: "只有 FY 与部分 2Q 可算。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "行业差异大，不动产和建设尤甚。金融业不适用。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "G2-13：日本应计异象不显著。Takehara 2018（摘要）https://www.jstage.jst.go.jp/article/jaa/2018/19/2018_1/_article/-char/en 。"
+    why: "已作为 F-Score 的一项（CFO>NP），不必单独打分。极端值只触发人工检查。"
+
+  - id: qual_asset_growth
+    family: business_quality
+    aliases: [CMA, INV]
+    name_zh: "总资产增长率"
+    plain_zh: "公司资产一年扩张多快；很多市场上扩张太快的公司后续回报差。"
+    purpose: quality_risk
+    direction: none
+    formula: "TA_FY(t) / TA_FY(t−1) − 1"
+    data_needed: "financial_statements.TA（2 个 FY）"
+    available_on_free_plan: true
+    free_plan_note: "须等回填。"
+    stale_on_free: false
+    unlocks_with: "回填到 2025-05"
+    sector_rules: "并购公司看 SigChgInC。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "日本证据与全球规律相左且未定论：Watanabe 等 2009、Titman 等 2009（转引自久田 2012，二手）https://www.cba.ynu.ac.jp/gakkai/kaisi/pdf/33-2-9.pdf ；Chou-Ko-Rhee 2023 称投资效应不普遍；Walkshäusl 2020 亚太回归 INV 斜率 −0.427、t=−6.2，但混合了其他市场。"
+    why: "不可照搬美国结论，方向都未定，因此 direction 留空。放进评估工具的验证清单。"
+
+  - id: qual_roe
+    family: business_quality
+    aliases: [Q1]
+    name_zh: "ROE（水平与预期）"
+    plain_zh: "公司用股东的钱一年能赚多少百分比。"
+    purpose: quality_risk
+    direction: higher_better
+    formula: "valuation_daily.ROE（TTM）与 FwdROE；3 年平均需多个 FY。FwdROE 实测等于 FwdEPS/BPS。"
+    data_needed: "valuation_daily.ROE, FwdROE"
+    available_on_free_plan: true
+    free_plan_note: "TTM ROE 覆盖 Prime 98%、Standard 98%、Growth 92%。文档字段 ROE 只在 FY 有，季度为 0%，勿用。3 年平均算不出。"
+    stale_on_free: false
+    unlocks_with: "3 年平均：J-Quants Light 以上"
+    sector_rules: "银行、证券的 PBR 主要用它解释。ROE 被一次性利润抬高时看 gate_one_off。"
+    status: display
+    planned_status: display
+    evidence_strength: moderate
+    evidence: "G2-06、G2-07、G2-12。"
+    why: "已是残差的输入，再单独计分等于重复计算。"
+
+  - id: qual_roic
+    family: business_quality
+    aliases: [Q2]
+    name_zh: "ROIC"
+    plain_zh: "连借来的钱算在内，公司的投入每年能赚多少。"
+    purpose: quality_risk
+    direction: higher_better
+    formula: "OP_FY*(1−0.30) / (debt + ShEq)"
+    data_needed: "有利子負債：Free 无"
+    available_on_free_plan: false
+    free_plan_note: "Free 无有息负债。"
+    stale_on_free: false
+    unlocks_with: "EDINET 或 J-Quants Premium"
+    sector_rules: "金融业不适用。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "无日本专项证据；G2-02、G2-03 称盈利能力因子在日本弱。"
+    why: "不值得为它付费。OP/TA 是可用的替代。"
+
+  - id: qual_margin_stability
+    family: business_quality
+    aliases: [Q3]
+    name_zh: "5 年利润率稳定性"
+    plain_zh: "过去 5 年利润率波动大不大。"
+    purpose: quality_risk
+    direction: lower_better
+    formula: "std(OP_FY/Sales_FY, 5Y)"
+    data_needed: "5 个 FY"
+    available_on_free_plan: false
+    free_plan_note: "Free 只有 2 个 FY 左右。"
+    stale_on_free: false
+    unlocks_with: "J-Quants Light（勉强 5 个点）或 Standard"
+    sector_rules: "周期行业天然波动大，只作周期性标签。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "证据薄弱，5 个点的标准差本身也不稳。"
+    why: "不值得占评分权重。"
+
+  - id: qual_ocf_positive_years
+    family: business_quality
+    aliases: [Q8]
+    name_zh: "营业现金流为正年数"
+    plain_zh: "最近几年主业有没有持续赚到现金。"
+    purpose: quality_risk
+    direction: higher_better
+    formula: "count(CFO_FY>0) 在可得 FY 内；按实际年数判定，缺失不算不通过。"
+    data_needed: "financial_statements.CFO（FY）"
+    available_on_free_plan: true
+    free_plan_note: "Free 只有 2 年，文档的 2/3 门槛改为按可得年数。"
+    stale_on_free: false
+    unlocks_with: "完整 3 年：J-Quants Light 以上"
+    sector_rules: "银行 CFO 约 99% 为空；不动产购地年份 CFO 可能为负。"
+    status: display
+    planned_status: display
+    evidence_strength: moderate
+    evidence: "属 H5 的去劣逻辑，无单独收益检验。"
+    why: "内容已被 F-Score 与 gate_distress 覆盖，不再单列门槛，以免重复。"
+
+  - id: qual_growth_quality
+    family: business_quality
+    aliases: [G8, growth_quality]
+    name_zh: "增长质量（现金转化）"
+    plain_zh: "利润增长有没有真的带来现金，还是靠压货和放宽赊销堆出来的。"
+    purpose: quality_risk
+    direction: higher_better
+    formula: "CFO_FY/OP_FY（OP<=0 无效）；growth(売上債権+棚卸資産) − growth(Sales) 需明细。"
+    data_needed: "financial_statements.CFO, OP；应收和存货需 EDINET"
+    available_on_free_plan: true
+    free_plan_note: "现金转化部分可算（FY、2Q）；营运资本部分不能。"
+    stale_on_free: false
+    unlocks_with: "EDINET 或 J-Quants Premium（应收、存货）"
+    sector_rules: "金融业不适用。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "G2-13：日本应计异象弱；针对这一指标的日本研究未找到。"
+    why: "合乎常理但无回报证据，并与 F-Score 重叠。极端值作展示红旗。"
+
