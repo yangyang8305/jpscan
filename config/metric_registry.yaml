@@ -23,6 +23,10 @@
 #   公式中的 fc(x) 指：最新财务文档是 FY 行时取对应 Nx 字段，是 1Q、2Q、3Q 行时取 F 字段；此后的修订文档
 #   （EarnForecastRevision、DividendForecastRevision）只覆盖它有值的字段，其余字段逐字段向前延续。
 #   FOP_initial 指上一财年 FY 行的 NxFOP。
+# 收益口径（已实测）：AdjC 带下载版本，2026-08-14 已有 68 只 AdjC≠C，说明历史价按截面日之后的分割调整过，而 write_merge 不会重写旧分区，
+#   版本边界会产生假暴跌。所有收益统一用 C(t)/(C(t−n)*∏AdjFactor(t−n+1..t))，AdjC 只作核对（AdjC/C 跳变全部落在 AdjFactor≠1 的行上）。
+#   AdjFactor 只在分割处≠1，所以这个收益不含除息：窗口跨除权日时加回 Div2Q、DivFY（或预想 FDiv2Q、FDivFY）。
+#   Free 没有除息日字段，除权日按期末权利落日估算（期末前第 1 个交易日），这部分是估算。
 version: "0.1.0"
 as_of: "2026-11-07"
 changelog:
@@ -1169,8 +1173,8 @@ metrics:
     plain_zh: "上个月比同行跌得最多的股票，这个月往往反弹。"
     purpose: mispricing_oversold
     direction: lower_better
-    formula: "AdjC(t)/AdjC(t−21) − 1 减去同 S33 中位；可跳过最近 1 日以减少买卖价差影响；只在流动性门槛内使用。"
-    data_needed: "prices_daily.AdjC；security_master.S33"
+    formula: "C(t)/(C(t−21)*∏AdjFactor(t−20..t)) − 1，窗口跨除权日时加回估算分红（见文件头收益口径），再减同业（peer_group：S33，不足 20 只回退 S17）中位。不跳过最近 1 日。"
+    data_needed: "prices_daily.C, AdjFactor；financial_statements.Div2Q, DivFY, FDiv2Q, FDivFY, CurPerEn；trading_calendar；security_master.S33, S17"
     available_on_free_plan: true
     free_plan_note: "当日覆盖 99.8%。最差 10% 的分界约 −8.6%，命中 369 只，其中流动性核心池内 207 只。"
     stale_on_free: true
@@ -1179,7 +1183,7 @@ metrics:
     status: score
     planned_status: score
     evidence_strength: moderate
-    evidence: "存在性证据强但偏老：东证 1975-1997 研究；Chou-Wei-Chung 2007。KAKEN 20K01746：反转在超小型股中最强，那里成本也最高 https://kaken.nii.ac.jp/en/report/KAKENHI-PROJECT-20K01746/20K01746seika 。近期扣成本检验未找到。实测与所有估值、质量指标行业内秩相关都接近 0（绝对值不超过 0.15），是最独立的一条。"
+    evidence: "存在性证据强但偏老：东证 1975-1997 研究；Chou-Wei-Chung 2007。KAKEN 20K01746：反转在超小型股中最强，那里成本也最高 https://kaken.nii.ac.jp/en/report/KAKENHI-PROJECT-20K01746/20K01746seika 。近期扣成本检验未找到。实测 2024-09-27（9 月末权利落日）核心池按当前股息率五分组，最高组比最低组低 2.1 个百分点，对照日 09-20 只低 0.35 个百分点（用当前股息率代理当时，只测了一天，方向明确、幅度粗略）。实测与所有估值、质量指标行业内秩相关都接近 0（绝对值不超过 0.15），是最独立的一条。"
     why: "错杀维度最有直接根据的学术信号。必须用保守成本检验，Free 上只能研究。"
 
   - id: rev_no_news_loser
@@ -1210,7 +1214,7 @@ metrics:
     purpose: mispricing_oversold
     direction: flag
     formula: "params.oversold.trigger.*：C/max(C,60)−1、单日跌幅、Vo/mean(Vo,20)；LL=1 标记跌停。"
-    data_needed: "prices_daily.AdjC, Vo, UL, LL"
+    data_needed: "prices_daily.C, AdjFactor, Vo, UL, LL"
     available_on_free_plan: true
     free_plan_note: "28 个交易日跌>=10% 共 461 股日（放量 138），LL=1 共 72。"
     stale_on_free: true
@@ -1309,8 +1313,8 @@ metrics:
     plain_zh: "过去两三年落后的股票，之后有回升倾向。"
     purpose: mispricing_oversold
     direction: lower_better
-    formula: "过去 12-36 个月累计收益，跳过最近 1 个月；Free 最长 24 个月。"
-    data_needed: "prices_daily.AdjC"
+    formula: "过去 12-36 个月累计收益（C 与 AdjFactor 口径），跳过最近 1 个月；Free 最长 24 个月。"
+    data_needed: "prices_daily.C, AdjFactor"
     available_on_free_plan: true
     free_plan_note: "窗口不足 3 年，价格仍在回填。"
     stale_on_free: false
@@ -1330,8 +1334,8 @@ metrics:
     plain_zh: "过去一年（不含最近一个月）涨得多的股票继续涨。"
     purpose: trend_timing
     direction: higher_better
-    formula: "AdjC(t−21)/AdjC(t−252) − 1"
-    data_needed: "prices_daily.AdjC"
+    formula: "C 与 AdjFactor 口径（见文件头）下 t−252 至 t−21 的累计收益"
+    data_needed: "prices_daily.C, AdjFactor"
     available_on_free_plan: true
     free_plan_note: "价格回填后可算。"
     stale_on_free: false
@@ -1351,7 +1355,7 @@ metrics:
     purpose: trend_timing
     direction: higher_better
     formula: "日或周收益对市场收益回归的残差累计（t−252 至 t−21）除以残差波动；Free 用全市场市值加权代理。"
-    data_needed: "prices_daily.AdjC；自算市场收益（Light 有 TOPIX）"
+    data_needed: "prices_daily.C, AdjFactor；自算市场收益（Light 有 TOPIX）"
     available_on_free_plan: true
     free_plan_note: "须价格回填完成；2 年窗口勉强够。"
     stale_on_free: false
@@ -2325,7 +2329,7 @@ data_sources:
 validation:
   tool: "指标评估工具（规划文档第 7 章流程）"
   tests:
-    - "每个 score 和 display 指标：同业内 IC 与十分位收益（5、21、60、120 个交易日），扣保守成本。"
+    - "每个 score 和 display 指标：同业内 IC 与十分位收益（5、21、60、120 个交易日），扣保守成本。未来收益用 C 与 AdjFactor 口径并加回分红，否则会低估 yield 家族；Free 没有除息日，加回部分是估算，须注明。"
     - "增量：val_pbr_roe_residual 对 val_pbr；val_fwd_ep 对 val_norm_per；qual_fscore7 对 val_pbr；mom_idio、rev_long_term 对 val_pbr；guid_q_sue、guid_earnings_reaction 对 guid_forecast_innovation。"
     - "家族独立性：家族间命中名单重合与秩相关；相关超过 0.6 的两个家族合并。"
     - "门槛：被排除和未被排除的股票后续收益差；没有差别的门槛取消。"
@@ -2335,6 +2339,7 @@ validation:
   demotion_rule: "score 转 display 须满足：样本外连续两次评估方向相反或扣成本后为零。"
   warnings:
     - "2 年 Free 数据只能测字段质量和方向，是单边上涨市，不要据此调参；跨周期结论要 10 年数据。"
+    - "增量拉取后先核对 AdjC 版本：分割发生在两次拉取之间时，用 AdjC 差分会出现假暴跌并进入 rev_1m 最差 10%。目前只证实了前提（68 只 AdjC≠C），还没有观察到真实案例。"
     - "权重先等权，文献里的显著性不能换算成权重。"
     - "Free 回测含幸存者问题，须与 jpx_delisted 核对。"
     - "2020s 的日本证据几乎都来自指数或卖方；东证 2023 改革后的结构变化基本未被严谨研究覆盖。"
