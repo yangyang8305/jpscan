@@ -379,6 +379,18 @@ def test_intact_unknown_items_do_not_count_as_pass_or_fail():
     assert out.loc[2, "intact_status"] == "pass"           # 金融业只看分红项
 
 
+def test_regime_uses_universe_and_reports_market_source():
+    from jpscan.regime.regime import build_regime
+    dates = pd.bdate_range("2026-01-05", periods=3)
+    rows = []
+    for code, common in (("11110", True), ("22220", True), ("13050", False)):
+        for d in dates:
+            rows.append({"Date": d.date(), "Code": code, "mkt_ret": 0.01, "px_vs_ma200": 0.1 if common else -0.5, "mcap": 1e10, "ret_1d": 0.0, "ret_21d": 0.0,
+                         "is_common_stock": common, "in_tse_main": True, "mkt_source": "index_topix"})
+    rg = build_regime(pd.DataFrame(rows), PARAMS)
+    assert (rg["breadth"] == 1.0).all() and rg["mkt_source"].iloc[0] == "index_topix" and rg["regime"].iloc[-1] == "neutral"
+
+
 def test_oversold_output_has_no_reaction_ratio_and_event_flags_run():
     dates = pd.bdate_range("2026-06-01", periods=30)
     n = len(dates)
