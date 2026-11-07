@@ -3,7 +3,8 @@
 #
 # 三份独立评估（研究证据、从业者判断、实测数据可得性）的结论在此合并；有分歧的地方写在 why 或 evidence 里。
 # 本文件未经回测：evidence_strength 是外部证据的强度，不代表本工具已验证。所有阈值都是先验值，
-# 只能由指标评估工具的样本外结果修改，且须更新 version 与 changelog。
+# 只能由指标评估工具的样本外结果修改，且须更新 version 与 changelog。公式错误、字段错误和分布问题可以直接修，
+# 但不得依据收益结果，changelog 须写明依据。
 #
 # 字段约定
 #   family:      所属家族。evidence 家族见 families；另有 risk_gates、execution、context 三个非证据分组。
@@ -27,9 +28,12 @@
 #   版本边界会产生假暴跌。所有收益统一用 C(t)/(C(t−n)*∏AdjFactor(t−n+1..t))，AdjC 只作核对（AdjC/C 跳变全部落在 AdjFactor≠1 的行上）。
 #   AdjFactor 只在分割处≠1，所以这个收益不含除息：窗口跨除权日时加回 Div2Q、DivFY（或预想 FDiv2Q、FDivFY）。
 #   Free 没有除息日字段，除权日按期末权利落日估算（期末前第 1 个交易日），这部分是估算。
-version: "0.1.0"
+version: "0.2.0"
 as_of: "2026-11-07"
 changelog:
+  - version: "0.2.0"
+    date: "2026-11-07"
+    note: "按两份评审和实测修正公式与口径。依据是公式错误、字段错误和数据分布，不是收益结果：仍未做任何收益检验。状态变化：val_pbr 转入 score；val_pbr_roe_residual、yield_net_payout、evt_net_share_reduction、rev_no_news_loser 转出 score，计数变为 score 10、gate 15、display 58、excluded 9。这些是纠错，不是 promotion_rule、demotion_rule 意义上的升降。新阈值（F>=6、EqAR<0.30、幅度>=0.5%、必要增益率>=0.50、TA 同比>=20%、max(2*中位,0.10)、一次性线 0.85）同样是先验。未采纳的意见及原因见 docs/指标与数据评估.md 第 11 节。"
   - version: "0.1.0"
     date: "2026-11-07"
     note: "初版：合并三份独立评估与当日实测；未做收益回测，全部阈值为先验"
