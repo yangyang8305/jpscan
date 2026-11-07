@@ -762,7 +762,7 @@ def _supervision_table(table: Any, kind_default: str | None, source_page: str) -
                      "market": _clean(_cell(tx, ci["market"])), "released_date": released, "content": content,
                      "note": _clean(_cell(tx, ci["note"])),
                      "detail_url": _href(_cell(tuple(cells), ci["detail"])) or _href(_cell(tuple(cells), ci["name"])),
-                     "is_current": (source_page == "current") or (ci["released_date"] is not None and released is None),
+                     "is_current": source_page == "current",
                      "source_page": source_page})
     return recs
 
@@ -787,7 +787,11 @@ def parse_supervision_current(html: str | bytes) -> pd.DataFrame:
 
 
 def parse_supervision_history(html: str | bytes) -> pd.DataFrame:
-    """指定履歴：kind 由「内容」列推断；解除年月日 "-" → None 且 is_current=True。"""
+    """指定履歴：kind 由「内容」列推断；解除年月日 "-" → None。
+
+    is_current 一律 False：履歴页的 "-" 只表示没有「解除」，已退市的銘柄同样是 "-"，不能据此判断仍在指定中；
+    是否现行只看「現在の指定状況」页（merge_supervision / 作业据此重算）。
+    """
     recs = []
     for t in _tables_with(_soup(html), "指定年月日"):
         recs.extend(_supervision_table(t, None, "history"))
@@ -795,18 +799,25 @@ def parse_supervision_history(html: str | bytes) -> pd.DataFrame:
 
 
 def merge_supervision(current: pd.DataFrame, history: pd.DataFrame) -> pd.DataFrame:
-    """合并两页：以履歴为主（含 解除年月日 / 内容），现行页补充未出现在履歴中的记录，并标记 is_current。"""
-    keys = TABLES["supervision"].keys
+    """合并两页：以履歴为主（含 解除年月日 / 内容），现行页补充履歴缺的记录与 备考 / 详细链接；is_current = 出现在现行页。"""
     if history.empty:
         return current
     if current.empty:
         return history
-    cur_keys = set(map(tuple, current[keys].astype(object).values.tolist()))
+    cur = {k: i for i, k in enumerate(supervision_keys(current))}
     hist = history.copy()
-    hist["is_current"] = [tuple(k) in cur_keys or bool(c) for k, c in zip(hist[keys].astype(object).values.tolist(), hist["is_current"])]
-    hist_keys = set(map(tuple, hist[keys].astype(object).values.tolist()))
-    extra = current[[tuple(k) not in hist_keys for k in current[keys].astype(object).values.tolist()]]
+    for col in ("note", "detail_url"):
+        extra_vals = [current[col].iloc[cur[k]] if k in cur else pd.NA for k in supervision_keys(hist)]
+        hist[col] = hist[col].fillna(pd.Series(extra_vals, index=hist.index, dtype="string"))
+    hist["is_current"] = [k in cur for k in supervision_keys(hist)]
+    hist_keys = set(supervision_keys(hist))
+    extra = current[[k not in hist_keys for k in supervision_keys(current)]]
     return pd.concat([hist, extra], ignore_index=True)
+
+
+def supervision_keys(df: pd.DataFrame) -> list[tuple]:
+    """(指定年月日, Code, kind) 元组列表，用于跨页比对现行状态。"""
+    return [tuple(k) for k in df[TABLES["supervision"].keys].astype(object).values.tolist()]
 
 
 # ----------------------------------------------------------------------------------------------
