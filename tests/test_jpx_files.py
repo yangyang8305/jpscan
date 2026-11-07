@@ -3,13 +3,19 @@ from __future__ import annotations
 
 import io
 from datetime import date, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import openpyxl
 import pandas as pd
 import pytest
 
+from jpscan.config import Settings
 from jpscan.connectors import jpx_files as J
+from jpscan.jobs import ingest_jpx
+from jpscan.ledger import Ledger
+from jpscan.paths import DataPaths
+from jpscan.store import Store
 
 
 def xlsx(sheets: dict[str, list[list[Any]]]) -> bytes:
@@ -310,3 +316,254 @@ def test_find_links():
     assert [u.rsplit("/", 1)[-1] for u in J.find_kessan_links(html)] == ["kessan.xlsx", "kessan09_1106.xlsx"]
     assert [u.rsplit("/", 1)[-1] for u in J.find_price_limit_links(html)] == ["1106.csv", "1106_ETF.csv"]
     assert J.norm_code(9991) == "99910" and J.norm_code("999A") == "999A0" and J.norm_code("99910") == "99910" and J.norm_code("-") is None
+
+
+# ---------------------------------------------------------------------------------------------
+# 作业（注入 fetcher，全程不联网）
+# ---------------------------------------------------------------------------------------------
+K_ATT = J.BASE + "/listing/event-schedules/financial-announcement/k-att/"
+PL_ATT = J.BASE + "/equities/trading/domestic/p-att/"
+IMP_FILE = J.BASE + "/listing/market-alerts/improvement-period/i-att/Companies_ImprovementPeriod_JP_261105.xlsx"
+PERPBR_A = J.BASE + "/markets/statistics-equities/misc/a-att/perpbr202609.xlsx"
+PERPBR_B = J.BASE + "/markets/statistics-equities/misc/b-att/perpbr202610.xlsx"
+DELISTED_ARCHIVE = J.BASE + "/listing/stocks/delisted/archives-01.html"
+TODAY = date(2026, 11, 7)
+
+SUPERVISION_HISTORY_2025_HTML = """<table><thead><tr><th>指定年月日</th><th>銘柄名</th><th>コード</th><th>市場区分 （注）</th><th>解除年月日</th><th>内容</th><th>備考</th></tr></thead>
+<tr><td>2025/12/01</td><td>（株）長期監理</td><td>9982</td><td>スタンダード</td><td>-</td><td>監理銘柄（審査中）指定</td><td></td></tr></table>"""
+
+
+def site() -> dict[str, Any]:
+    """虚构站点：url → bytes 或 (status, None)。"""
+    return {
+        J.URLS["listed_monthly"]: listed_xlsx(),
+        J.URLS["topix_weights"]: topix_csv(),
+        J.URLS["per_pbr_page"]: f'<a href="{PERPBR_A}"></a><a href="{PERPBR_B}"></a>'.encode(),
+        PERPBR_A: perpbr_xlsx("2026/09"),
+        PERPBR_B: perpbr_xlsx("2026/10"),
+        J.URLS["capital_cost_disclosure"]: capital_cost_xlsx(),
+        J.URLS["earnings_page"]: f'<a href="{K_ATT}kessan.xlsx"></a><a href="{K_ATT}kessan09_1106.xlsx"></a>'.encode(),
+        K_ATT + "kessan.xlsx": kessan_xlsx(None, [kessan_row(datetime(2026, 11, 9), 9991)]),
+        K_ATT + "kessan09_1106.xlsx": kessan_xlsx("2026年11月5日 現在", [kessan_row(datetime(2026, 11, 9), 9991),
+                                                                     kessan_row(datetime(2026, 12, 1), 9992),
+                                                                     kessan_row("未定_Undecided", "999A")]),
+        J.URLS["price_limit_page"]: f'<a href="{PL_ATT}1106.csv"></a><a href="{PL_ATT}1106_ETF.csv"></a>'.encode(),
+        PL_ATT + "1106.csv": price_limit_csv(),
+        PL_ATT + "1106_ETF.csv": price_limit_etf_csv(),
+        J.URLS["delisted"]: DELISTED_HTML.encode(),
+        DELISTED_ARCHIVE: DELISTED_2025_HTML.encode(),
+        J.URLS["supervision_current"]: SUPERVISION_CURRENT_HTML.encode(),
+        J.URLS["supervision_history"]: SUPERVISION_HISTORY_HTML.encode(),
+        J.BASE + "/listing/market-alerts/supervision/01-archives-01.html": SUPERVISION_HISTORY_2025_HTML.encode(),
+        J.URLS["new_listings"]: NEW_LISTINGS_HTML.encode(),
+        J.URLS["improvement_page"]: f'<a href="{IMP_FILE}"><img/></a>'.encode(),
+        IMP_FILE: improvement_xlsx(),
+    }
+
+
+class Env:
+    def __init__(self, tmp_path):
+        self.settings = Settings(root=tmp_path, data_dir=tmp_path / "data", params_path=tmp_path / "p.yaml", jquants_api_key=None,
+                                 anthropic_api_key=None, edinet_api_key=None, fred_api_key=None)
+        self.paths = DataPaths(tmp_path / "data").ensure()
+        self.ledger = Ledger(self.paths.ledger_sqlite)
+        self.store = Store(self.paths)
+        self.site = site()
+        self.requests: list[str] = []
+
+    def fetcher(self, url: str):
+        self.requests.append(url)
+        return self.site.get(url, (404, None))
+
+    def run(self, datasets=None, month=None, today=TODAY) -> dict[str, Any]:
+        self.requests.clear()
+        client = J.JPXFiles(self.paths, self.ledger, fetcher=self.fetcher)
+        return ingest_jpx.run(self.settings, self.paths, self.ledger, self.store, datasets=datasets, month=month, client=client, today=today)
+
+    def table(self, ds: str) -> pd.DataFrame:
+        return self.store.read("staging", J.TABLES[ds].table)
+
+
+@pytest.fixture
+def env(tmp_path) -> Env:
+    return Env(tmp_path)
+
+
+def test_job_all_datasets_written(env):
+    res = env.run()
+    assert res["status"] == "ok"
+    ds = res["datasets"]
+    assert set(ds) == set(J.DATASETS) and all(v["status"] == "ok" and not v["errors"] for v in ds.values())
+    expected = {"listed_monthly": 3, "topix_weights": 2, "per_pbr_monthly": 10, "capital_cost_disclosure": 4, "earnings_schedule": 3,
+                "price_limit_expansion": 3, "delisted": 3, "supervision": 5, "new_listings": 1, "improvement_period": 6}
+    for name, n in expected.items():
+        assert ds[name]["rows_table"] == n, name
+        assert ds[name]["table"] == J.TABLES[name].table
+        assert len(env.table(name)) == n
+        assert not env.table(name).duplicated(subset=J.TABLES[name].keys).any()
+    assert ds["listed_monthly"]["data_date"] == "2026-10-31" and ds["improvement_period"]["data_date"] == "2026-11-05"
+    assert ds["per_pbr_monthly"]["data_date"] == "2026-10" and ds["capital_cost_disclosure"]["data_date"] == "2026-09"
+    assert env.store.partitions("staging", "jpx_listed_monthly") == ["2026-10"]
+    assert env.store.partitions("staging", "jpx_earnings_schedule") == ["2026-11", "2026-12", "undecided"]
+    assert env.store.partitions("staging", "jpx_improvement_period") == ["all"]
+    # 日期列落盘为 date32（Python date 读回）
+    raw = pd.read_parquet(env.store.table_dir("staging", "jpx_improvement_period") / "all.parquet")
+    assert isinstance(raw["published_date"].iloc[0], date)
+    assert env.ledger.get_run(res["run_id"])["status"] == "ok"
+
+
+def test_job_saves_raw_and_marks_ledger(env):
+    env.run(["improvement_period"])
+    root = env.paths.raw_dir("jpx", "improvement_period")
+    files = sorted(p.name for p in root.rglob("*") if p.is_file())
+    assert len(files) == 2 and any(f.startswith("Companies_ImprovementPeriod_JP_261105_20261107_") and f.endswith(".xlsx") for f in files)
+    assert (root / "202611").is_dir()
+    assert env.ledger.status_of("jpx.improvement_period", "2026-11-05") == "ok"
+    with env.ledger.conn() as c:
+        n = c.execute("SELECT COUNT(*) FROM raw_files WHERE source='jpx' AND dataset='improvement_period'").fetchone()[0]
+    assert n == 2
+
+
+def test_job_idempotent_and_skips_finished_history(env):
+    first = env.run()
+    assert PERPBR_A in env.requests and DELISTED_ARCHIVE in env.requests
+    raw_count = len([p for p in env.paths.raw.rglob("*") if p.is_file()])
+    second = env.run()
+    for name, r in second["datasets"].items():
+        assert r["status"] == "ok" and r["rows_table"] == first["datasets"][name]["rows_table"], name
+    assert PERPBR_A not in env.requests and DELISTED_ARCHIVE not in env.requests   # 已完成的月份 / 存档年不再抓
+    assert J.URLS["delisted"] in env.requests                                      # 当年页每次都抓
+    assert second["datasets"]["per_pbr_monthly"]["files_skipped"] == 2
+    assert second["datasets"]["delisted"]["files_skipped"] == 1
+    assert len([p for p in env.paths.raw.rglob("*") if p.is_file()]) == raw_count  # 同内容不重复落盘
+
+
+def test_job_http_errors_are_recorded_and_others_continue(env):
+    env.site[J.URLS["listed_monthly"]] = (403, None)
+    env.site[K_ATT + "kessan09_1106.xlsx"] = (404, None)
+    del env.site[J.URLS["improvement_page"]]
+    res = env.run()
+    assert res["status"] == "partial"
+    ds = res["datasets"]
+    assert ds["listed_monthly"]["status"] == "error" and "403" in ds["listed_monthly"]["errors"][0]
+    assert ds["listed_monthly"]["rows_table"] == 0 and ds["listed_monthly"]["data_date"] is None
+    assert ds["earnings_schedule"]["status"] == "partial" and ds["earnings_schedule"]["rows_table"] == 1
+    assert ds["improvement_period"]["status"] == "error"
+    assert ds["topix_weights"]["status"] == "ok" and ds["delisted"]["status"] == "ok"
+    assert env.ledger.status_of("jpx.listed_monthly", "data_j") == "error"
+    assert env.ledger.status_of("jpx.improvement_period", "page") == "error"
+    assert env.ledger.get_run(res["run_id"])["status"] == "partial"
+    # 恢复后重跑可补齐
+    env.site[J.URLS["listed_monthly"]] = listed_xlsx()
+    assert env.run(["listed_monthly"])["datasets"]["listed_monthly"]["rows_table"] == 3
+
+
+def test_job_quarantines_unparsable_files_and_retries(env):
+    env.site[J.URLS["topix_weights"]] = "全く別の内容\n".encode("cp932")   # 解析出 0 行
+    env.site[PERPBR_A] = b"<html>not xlsx</html>"                          # 200 但不是 xlsx
+    res = env.run(["topix_weights", "per_pbr_monthly"])
+    assert res["datasets"]["topix_weights"]["status"] == "error"
+    pp = res["datasets"]["per_pbr_monthly"]
+    assert pp["status"] == "partial" and pp["data_date"] == "2026-10"
+    assert env.ledger.status_of("jpx.per_pbr_monthly", "2026-09") == "error"
+    assert list((env.paths.quarantine / "jpx" / "per_pbr_monthly").glob("2026-09_*.bin"))
+    # 出错的月份下次重试，已完成的不重抓
+    env.site[PERPBR_A] = perpbr_xlsx("2026/09")
+    again = env.run(["per_pbr_monthly"])
+    assert PERPBR_A in env.requests and PERPBR_B not in env.requests
+    assert again["datasets"]["per_pbr_monthly"]["rows_table"] == 10
+
+
+def test_job_page_without_links_is_reported(env):
+    env.site[J.URLS["improvement_page"]] = "<p>JS でのみ描画</p>".encode()
+    env.site[J.URLS["per_pbr_page"]] = b"<p></p>"
+    res = env.run(["improvement_period", "per_pbr_monthly"])
+    assert "xlsx" in res["datasets"]["improvement_period"]["errors"][0]
+    assert res["datasets"]["per_pbr_monthly"]["status"] == "error"
+
+
+def test_job_month_argument(env):
+    res = env.run(["per_pbr_monthly", "capital_cost_disclosure"], month="2026-09")
+    assert res["month"] == "2026-09"
+    assert set(env.table("per_pbr_monthly")["month"]) == {"2026-09"} and PERPBR_B not in env.requests
+    assert set(env.table("capital_cost_disclosure")["as_of_month"]) == {"2026-09"}
+    env.run(["per_pbr_monthly"], month="2026-09")   # 指定月强制重取
+    assert PERPBR_A in env.requests
+    assert env.run(["per_pbr_monthly"], month="2019-01")["datasets"]["per_pbr_monthly"]["status"] == "error"
+
+
+def test_job_supervision_current_flag_recomputed(env):
+    env.run(["supervision"])
+    t = env.table("supervision").set_index("Code")
+    assert t.loc["99910", "is_current"] and t.loc["999A0", "is_current"]
+    assert not t.loc["99820", "is_current"] and not t.loc["99920", "is_current"]
+    assert t.loc["99820", "kind"] == J.KIND_UNDER_REVIEW  # 存档页
+    # 9991 从现行页消失，2025 年存档行（不再抓取）进入现行页 → 全表重算
+    env.site[J.URLS["supervision_current"]] = """<h3>監理銘柄（審査中）</h3>
+<table><tr><th>指定年月日</th><th>銘柄名</th><th>コード</th><th>市場区分 （注）</th><th>詳細</th><th>備考</th></tr>
+<tr><td>2025/12/01</td><td>（株）長期監理</td><td>9982</td><td>スタンダード</td><td></td><td></td></tr>
+<tr><td>2026/09/15</td><td>（株）試験製作所</td><td>999A</td><td>グロース</td><td></td><td></td></tr></table>""".encode()
+    env.run(["supervision"])
+    t = env.table("supervision").set_index("Code")
+    assert not t.loc["99910", "is_current"] and t.loc["99820", "is_current"] and t.loc["999A0", "is_current"]
+    # 现行页取失败：保留上次的状态，履歴照常写入
+    env.site[J.URLS["supervision_current"]] = (403, None)
+    res = env.run(["supervision"])
+    assert res["datasets"]["supervision"]["status"] == "partial"
+    t = env.table("supervision").set_index("Code")
+    assert t.loc["99820", "is_current"] and not t.loc["99910", "is_current"]
+
+
+def test_job_earnings_latest_as_of_wins_and_snapshots_accumulate(env):
+    env.run(["earnings_schedule"])
+    t = env.table("earnings_schedule").set_index("Code")
+    assert t.loc["99910", "source_file"] == "kessan.xlsx"   # 同键保留 as_of 较新（抓取日 11/07 > 表内 11/05）
+    assert t.loc["999A0", "sched_status"] == "undecided"
+    # 决定日期后：undecided 旧行仍在（下游取最新 as_of），新日期入对应分区
+    env.site[K_ATT + "kessan09_1106.xlsx"] = kessan_xlsx("2026年11月6日 現在", [kessan_row(datetime(2026, 12, 15), "999A")])
+    env.run(["earnings_schedule"], today=date(2026, 11, 8))
+    t = env.table("earnings_schedule")
+    rows = t[t["Code"] == "999A0"]
+    assert len(rows) == 2 and rows.sort_values("as_of_date").iloc[-1]["sched_status"] == "scheduled"
+
+
+def test_job_improvement_period_keeps_each_publication(env):
+    env.run(["improvement_period"])
+    env.site[IMP_FILE] = improvement_xlsx(title="改善期間該当銘柄一覧（2026年12月1日公表）")
+    env.run(["improvement_period"], today=date(2026, 12, 2))
+    t = env.table("improvement_period")
+    assert t["published_date"].nunique() == 2 and len(t) == 12
+
+
+def test_job_rejects_unknown_dataset(env):
+    with pytest.raises(ValueError):
+        env.run(["nope"])
+
+
+# ---------------------------------------------------------------------------------------------
+# 抓取层（假 session，不联网）
+# ---------------------------------------------------------------------------------------------
+class FakeSession:
+    def __init__(self, status: int = 200):
+        self.status, self.calls, self.headers = status, [], {}
+
+    def get(self, url, params=None, headers=None, timeout=None):
+        self.calls.append(url)
+        return SimpleNamespace(status_code=self.status, content=b"body")
+
+
+def test_fetch_status_handling_and_rate_limit(env, monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(J.time, "sleep", sleeps.append)
+    client = J.JPXFiles(env.paths, env.ledger, session=FakeSession(200))
+    assert client.fetch("https://www.jpx.co.jp/a") == b"body" and client.fetch("https://www.jpx.co.jp/b") == b"body"
+    assert len(sleeps) == 1 and 1.0 <= sleeps[0] <= J.MIN_INTERVAL   # 相邻请求间隔 ≥ 1 秒
+    for status in (403, 404):
+        with pytest.raises(J.JPXFetchError) as ei:
+            J.JPXFiles(env.paths, env.ledger, session=FakeSession(status)).fetch("https://www.jpx.co.jp/c")
+        assert ei.value.status == status
+
+
+def test_default_client_uses_browser_user_agent(env):
+    client = J.JPXFiles(env.paths, env.ledger)
+    assert client.user_agent.startswith("Mozilla/5.0") and client.min_interval >= 1.0
