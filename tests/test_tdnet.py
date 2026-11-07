@@ -454,7 +454,7 @@ def test_run_writes_table_and_evidence_without_download(tmp_path, frozen_today):
     assert by_id["140120260105000003"]["is_correction"] == True  # noqa: E712  更新履历栏非空
     assert "140120260105000004" not in by_id                     # 英文短信与日文同代码同时刻同类别，已去重
     assert by_id["20260105_99950_1"]["category"] == "E05"        # 无 PDF 时的编号
-    assert by_id["20260105_99960_1"]["pdf_url"] is None          # 外部链接未采用
+    assert pd.isna(by_id["20260105_99960_1"]["pdf_url"])         # 外部链接未采用
 
     ev = ledger.get_evidence("EV-tdnet-140120260105000007")
     assert (ev["source_type"], ev["doc_id"], ev["internal_id"], ev["snippet_lang"]) == ("tdnet", "140120260105000007", "99910", "ja")
