@@ -108,3 +108,171 @@ def test_parse_fred_json():
     assert df.loc[0, "source"] == "fred"
     with pytest.raises(MacroParseError):
         parse_fred_json(b'{"error_message":"x"}', "usd_jpy", "JPY/USD")
+
+
+# ---------- 作业（假 HTTP，不联网） ----------
+class _Resp:
+    def __init__(self, content: bytes, status: int = 200):
+        self.content, self.status_code = content, status
+
+
+class _Session:
+    def __init__(self, pages):
+        self.pages, self.calls = pages, []
+
+    def get(self, url, params=None, headers=None, timeout=None):
+        self.calls.append((url, params))
+        return self.pages[url]
+
+
+def _boj_body(code: str, dates: list[str]) -> bytes:
+    head = "STATUS,200\nMESSAGEID,M181000I\nMESSAGE,架空\nNEXTPOSITION,\n" \
+           "SERIES_CODE,NAME_OF_TIME_SERIES_J,UNIT_J,FREQUENCY,CATEGORY_J,LAST_UPDATE,SURVEY_DATES,VALUES\n"
+    return (head + "".join(f"{code},架空,年％,DAILY,架空,20261106,{d},0.5\n" for d in dates)).encode("shift_jis")
+
+
+def _pages(mof_all=JGB_CSV, mof_cur=None, boj_start=""):
+    from jpscan.connectors.macro import BOJ_SERIES, MOF_ALL_URL, MOF_CURRENT_URL, boj_url
+    pages = {MOF_ALL_URL: _Resp(mof_all),
+             MOF_CURRENT_URL: _Resp(mof_cur or "基準日,1年,2年,5年,10年,20年,30年,40年\nR8.11.2,9,9,9,9.5,9,9,9\nR8.11.5,1,1,1,1.1,1,1,1\n".encode("cp932"))}
+    for series, (db, code) in BOJ_SERIES.items():
+        pages[boj_url(db, code, boj_start or None)] = _Resp(_boj_body(code, ["20261102", "20261104"]))
+    return pages
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch):
+    from jpscan.config import Settings
+    from jpscan.jobs import ingest_macro
+    from jpscan.ledger import Ledger
+    from jpscan.paths import DataPaths
+    from jpscan.store import Store
+    monkeypatch.setattr(ingest_macro, "MIN_INTERVAL", 0)
+    paths = DataPaths(tmp_path / "data").ensure()
+    settings = Settings(root=tmp_path, data_dir=paths.root, params_path=tmp_path / "p.yaml", jquants_api_key=None,
+                        anthropic_api_key=None, edinet_api_key=None, fred_api_key=None)
+    return settings, paths, Ledger(paths.ledger_sqlite), Store(paths)
+
+
+def _install(monkeypatch, pages):
+    from jpscan.jobs import ingest_macro
+    sess = _Session(pages)
+    monkeypatch.setattr(ingest_macro, "http_session", lambda: sess)
+    return sess
+
+
+def test_job_writes_series_and_skips_fred_without_key(env, monkeypatch):
+    from jpscan.jobs import ingest_macro
+    settings, paths, ledger, store = env
+    sess = _install(monkeypatch, _pages())
+    out = ingest_macro.run(settings, paths, ledger, store)
+    assert out["status"] == "ok"
+    assert out["sources"]["fred"] == "skipped_no_key"
+    assert ledger.status_of("macro", "fred") == "skipped_no_key"
+    assert ledger.status_of("macro", "jgb_all") == "ok"
+    assert len(sess.calls) == 4           # 全史、当月、两个日銀序列各一次
+
+    df = store.read("staging", "macro_series")
+    assert list(df.columns) == ["series", "date", "value", "source", "unit", "fetched_at"]
+    assert not df.duplicated(["series", "date"]).any()
+    assert store.partitions("staging", "macro_series") == ["all"]
+    assert out["series"]["jgb_10y"] == {"rows": 4, "latest_date": "2026-11-05", "latest_value": 1.1}
+    assert out["series"]["call_rate_on"]["rows"] == 2
+    assert out["series"]["boj_basic_loan_rate"]["latest_date"] == "2026-11-04"
+    # 同一日期以当月文件为准
+    v = df[(df["series"] == "jgb_10y") & (df["date"] == "2026-11-02")]["value"].tolist()
+    assert v == [9.5]
+    assert list((paths.raw / "mof").rglob("*.csv")) and list((paths.raw / "boj").rglob("*.csv"))
+
+
+def test_job_second_run_is_incremental_and_idempotent(env, monkeypatch):
+    from jpscan.connectors.macro import MOF_ALL_URL
+    from jpscan.jobs import ingest_macro
+    settings, paths, ledger, store = env
+    _install(monkeypatch, _pages())
+    ingest_macro.run(settings, paths, ledger, store)
+    n1 = len(store.read("staging", "macro_series"))
+    raw1 = len(list(paths.raw.rglob("*.csv")))
+
+    # 最新日期 2026-11-04，回看 40 天 → 2026-09-25 所在月
+    sess = _install(monkeypatch, _pages(boj_start="202609"))
+    out = ingest_macro.run(settings, paths, ledger, store)
+    urls = [u for u, _ in sess.calls]
+    assert out["status"] == "ok"
+    assert MOF_ALL_URL not in urls        # 同月不重取全史
+    assert any("startDate=202609" in u for u in urls)
+    assert len(store.read("staging", "macro_series")) == n1
+    assert len(list(paths.raw.rglob("*.csv"))) == raw1   # 内容没变，不重复落盘
+
+
+def test_job_series_filter_limits_requests(env, monkeypatch):
+    from jpscan.jobs import ingest_macro
+    settings, paths, ledger, store = env
+    sess = _install(monkeypatch, _pages())
+    out = ingest_macro.run(settings, paths, ledger, store, series=["call_rate_on"])
+    assert len(sess.calls) == 1 and "STRDCLUCON" in sess.calls[0][0]
+    assert set(out["series"]) == {"call_rate_on"}
+    assert "fred" not in out["sources"]
+    with pytest.raises(ValueError):
+        ingest_macro.run(settings, paths, ledger, store, series=["nope"])
+
+
+def test_job_refetches_full_history_when_a_requested_series_has_none(env, monkeypatch):
+    from jpscan.connectors.macro import MOF_ALL_URL
+    from jpscan.jobs import ingest_macro
+    settings, paths, ledger, store = env
+    _install(monkeypatch, _pages())
+    ingest_macro.run(settings, paths, ledger, store, series=["jgb_10y"])
+    sess = _install(monkeypatch, _pages())
+    out = ingest_macro.run(settings, paths, ledger, store, series=["jgb_10y", "jgb_40y"])
+    assert MOF_ALL_URL in [u for u, _ in sess.calls]
+    assert out["series"]["jgb_40y"]["rows"] > 1
+
+
+def test_job_source_failure_is_recorded_and_others_continue(env, monkeypatch):
+    from jpscan.connectors.macro import MOF_ALL_URL
+    from jpscan.jobs import ingest_macro
+    settings, paths, ledger, store = env
+    pages = _pages()
+    pages[MOF_ALL_URL] = _Resp("<html>メンテナンス中</html>".encode("cp932"))
+    _install(monkeypatch, pages)
+    out = ingest_macro.run(settings, paths, ledger, store)
+    assert out["status"] == "partial"
+    assert ledger.status_of("macro", "jgb_all") == "error"
+    assert ledger.get_kv(ingest_macro.KV_JGB_ALL_MONTH) is None      # 下次运行重试全史
+    assert list(paths.quarantine.rglob("*.bin"))
+    assert out["series"]["call_rate_on"]["rows"] == 2
+
+
+def test_fred_key_never_reaches_raw_ledger_or_errors(env, monkeypatch, caplog):
+    import dataclasses
+    import requests
+
+    from jpscan.connectors.macro import FRED_URL
+    from jpscan.jobs import ingest_macro
+    settings, paths, ledger, store = env
+    secret = "SYNTHETICFREDKEY0123456789"
+    settings = dataclasses.replace(settings, fred_api_key=secret)
+    body = b'{"observations":[{"date":"2026-11-02","value":"123.5"}]}'
+    sess = _install(monkeypatch, {FRED_URL: _Resp(body)})
+    out = ingest_macro.run(settings, paths, ledger, store, series=["usd_jpy"])
+    assert out["series"]["usd_jpy"]["latest_value"] == 123.5
+    assert sess.calls[0][1]["series_id"] == "DEXJPUS" and sess.calls[0][1]["api_key"] == secret
+
+    # 连接失败时，requests 的异常文本带完整 URL（含 key）
+    class Boom(_Session):
+        def get(self, url, params=None, headers=None, timeout=None):
+            raise requests.ConnectionError(f"Max retries exceeded with url: {url}?api_key={secret}")
+
+    monkeypatch.setattr(ingest_macro, "http_session", lambda: Boom({}))
+    monkeypatch.setattr("jpscan.connectors.macro.time.sleep", lambda s: None)
+    out = ingest_macro.run(settings, paths, ledger, store, series=["nikkei225"])
+    assert out["status"] == "partial" and "ConnectionError" in out["sources"]["fred_nikkei225"]
+    assert secret not in str(out) and secret not in caplog.text
+
+    db_bytes = b"".join(p.read_bytes() for p in paths.db.iterdir() if p.is_file())
+    assert secret.encode() not in db_bytes
+    for p in paths.raw.rglob("*"):
+        assert secret not in str(p)
+        if p.is_file():
+            assert secret.encode() not in p.read_bytes()
