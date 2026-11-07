@@ -3,7 +3,8 @@ from datetime import date
 
 import pytest
 
-from jpscan.connectors.macro import MacroParseError, parse_jgb_csv, parse_wareki
+from jpscan.connectors.macro import (BOJ_SERIES, MacroParseError, boj_url, parse_boj_csv, parse_jgb_csv,
+                                     parse_wareki)
 
 
 @pytest.mark.parametrize("text,expected", [
@@ -61,3 +62,40 @@ def test_parse_jgb_csv_bad_header_raises():
         parse_jgb_csv("基準日,1年,2年\nR8.1.5,0.1,0.2\n".encode("cp932"))
     with pytest.raises(MacroParseError):
         parse_jgb_csv("基準日,1年,2年,5年,10年,20年,30年,40年\n".encode("cp932"))
+
+
+BOJ_CSV = (
+    "STATUS,200\nMESSAGEID,M181000I\nMESSAGE,正常に終了しました。\nDATE,2026-11-07T11:58:10.596+09:00\n"
+    "PARAMETER,FORMAT,CSV\nPARAMETER,LANG,\nPARAMETER,DB,FM01\nPARAMETER,STARTDATE,\nPARAMETER,ENDDATE,\nPARAMETER,STARTPOSITION,\n"
+    "NEXTPOSITION,\n"
+    "SERIES_CODE,NAME_OF_TIME_SERIES_J,UNIT_J,FREQUENCY,CATEGORY_J,LAST_UPDATE,SURVEY_DATES,VALUES\n"
+    "STRDCLUCON,架空金利,年％,DAILY,架空,20261106,20261102,1.5\n"
+    "STRDCLUCON,架空金利,年％,DAILY,架空,20261106,20261103,null\n"
+    "STRDCLUCON,架空金利,年％,DAILY,架空,20261106,20261104,0.25\n"
+    "OTHERCODE,別系列,年％,DAILY,架空,20261106,20261104,9.99\n"
+).encode("shift_jis")
+
+
+def test_parse_boj_csv():
+    df = parse_boj_csv(BOJ_CSV, "call_rate_on", "STRDCLUCON")
+    assert df["date"].tolist() == [date(2026, 11, 2), date(2026, 11, 4)]    # null 不出行
+    assert df["value"].tolist() == [1.5, 0.25]
+    assert (df["source"] == "boj").all() and (df["unit"] == "年%").all()
+    assert (df["series"] == "call_rate_on").all()
+
+
+def test_parse_boj_csv_error_status_raises():
+    body = "STATUS,400\nMESSAGEID,M181005E\nMESSAGE,架空のエラー\n".encode("shift_jis")
+    with pytest.raises(MacroParseError, match="M181005E"):
+        parse_boj_csv(body, "call_rate_on", "STRDCLUCON")
+
+
+def test_parse_boj_csv_no_rows_in_window_is_empty():
+    body = "STATUS,200\nMESSAGEID,M181000I\nMESSAGE,架空\nNEXTPOSITION,\n".encode("shift_jis")
+    assert parse_boj_csv(body, "call_rate_on", "STRDCLUCON").empty
+
+
+def test_boj_url_keeps_at_sign_and_adds_start():
+    db, code = BOJ_SERIES["boj_basic_loan_rate"]
+    assert boj_url(db, code) == "https://www.stat-search.boj.or.jp/api/v1/getDataCode?db=IR01&code=MADR1Z@D&format=csv"
+    assert boj_url(db, code, "202610").endswith("&format=csv&startDate=202610")
