@@ -1909,7 +1909,7 @@ metrics:
 # 阈值全部是先验：30% 沿用 params.value.core_metric_pct；不按任何收益结果调过。
 family_policy:
   coverage_floor: 0.60          # 沿用 params.peer_group.min_metric_coverage_for_confidence；按市场分别计算
-  ranking: "同一篮子内，按该股命中家族的指标同业分位等权平均排序；不按文献数字或样本内结果拟合权重。"
+  ranking: "同一篮子内，第一键是命中家族数（多份独立证据优先）；第二键是该篮子 anchor 家族的连续指标同业分位：B1 取已命中估值指标分位的平均，B2 取指引指标的较好分位，B3 取 rev_1m。不做跨家族平均：F-Score、配当上调没有同业分位，平均还会让单家族前 5% 排在三家族都是前 25% 之前。不按文献数字或样本内结果拟合权重。"
   coverage_metric: "设了 coverage_metric 的家族，覆盖率只按这个指标计算；该指标未知的公司整个家族记 unknown。否则 OP/TA 单独可算时，B2 的必要条件会提前生效，松紧随回填进度摆动。"
   note: "覆盖率低于 coverage_floor 的家族不能作必要条件，处理方式见 bucket_policy。每次运行重新计算覆盖率，回填或接入新数据后自动生效，无需改表。"
 
