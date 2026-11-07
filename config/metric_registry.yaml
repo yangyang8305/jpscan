@@ -957,9 +957,9 @@ metrics:
     sector_rules: "金融业回购受规制资本约束，单独看。"
     status: display
     planned_status: score
-    evidence_strength: strong
+    evidence_strength: moderate
     evidence: "G2-22（FY2001-2025，9548 件）：CAR(−5,+30) 均值 +4.7pp，PBR<1 约 6pp，规模<1% 仅 1.2pp，每 +1pp 规模 +0.59pp。G2-23：ROE<8% 公司 3 日 CAR 更大。注意该窗口含公告前和当日，公告后买入能否获利未单独报告。"
-    why: "样本大且新，是证据最明确的催化剂，但当前数据拿不到。分值按规模连续，不是固定加分。接入 TDnet 后优先启用。"
+    why: "样本大且新，但 CAR(−5,+30) 含公告前和当日，公告后买入能否获利未单独报告，所以只算 moderate。当前数据拿不到。分值按规模连续，不是固定加分。接入 TDnet 后优先走 promotion_rule 检验，不会自动计入。"
 
   - id: evt_dividend_change
     family: capital_action
@@ -2005,14 +2005,13 @@ families:
       hit_rules:
         - {metric: evt_dividend_change, rule: any_up_event, window_days: 30}
         - {metric: evt_net_share_reduction, rule: min_reduction, value: 0.01}
-        - {metric: evt_buyback, rule: min_value, value: 0.01, window_days: 30, active_when: "staging.disclosures 有数据"}
     fail_rule: null
     measured:
       known_share: {note: "配当修正可算；回购公告 0%（TDnet 尚未入库）；股数变化须回填到上年同期。未测全家族覆盖率。"}
       hits_all: null
       hits_liquid_core: null
     independence_note: "evt_net_share_reduction 与 yield_net_payout 用同一份股数变化；evt_buyback 启用后前者转为展示。"
-    evidence_summary: "回购规模证据 strong 但数据缺失，配当修正 moderate。这是目前最大的一块「证据强但拿不到」，只作可选确认，不作必要条件。"
+    evidence_summary: "回购规模样本大但窗口含公告前（moderate），且数据缺失；配当修正 moderate。只作可选确认，不作必要条件。"
 
   price_dislocation:
     name_zh: "价格错位"
