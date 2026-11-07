@@ -3,18 +3,22 @@
 - 財務省 国債金利（jgbcm.csv 当月、data/jgbcm_all.csv 全史）：cp932，和暦日期（R6.8.15），"-" 表示缺失。出典：財務省（PDL1.0）。
 - 日本銀行 時系列統計データ検索サイト API：Shift_JIS CSV，无需 key；注意事项禁止短时高频访问，每个序列每次运行只请求一次。
   公开时须注明出典。
+- FRED：需要 API key；key 只能放在查询参数里，所以不用 get_with_retry（其日志与异常文本会带完整 URL）。
 """
 from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 import re
+import time
 import unicodedata
 from datetime import date, datetime
 from typing import Any
 
 import pandas as pd
+import requests
 
 log = logging.getLogger("jpscan.macro")
 
@@ -26,6 +30,9 @@ JGB_COLUMNS = {"1年": "jgb_1y", "2年": "jgb_2y", "5年": "jgb_5y", "10年": "j
 
 BOJ_URL = "https://www.stat-search.boj.or.jp/api/v1/getDataCode"
 BOJ_SERIES = {"call_rate_on": ("FM01", "STRDCLUCON"), "boj_basic_loan_rate": ("IR01", "MADR1Z@D")}
+
+FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
+FRED_SERIES = {"usd_jpy": ("DEXJPUS", "JPY/USD"), "nikkei225": ("NIKKEI225", "index")}
 
 ERA_BASE = {"R": 2018, "H": 1988, "S": 1925}
 _WAREKI = re.compile(r"^([RHS])(\d{1,2}|元)\.(\d{1,2})\.(\d{1,2})$")
@@ -124,4 +131,38 @@ def parse_boj_csv(content: bytes, series: str, code: str) -> pd.DataFrame:
             raise MacroParseError(f"boj api: 日期格式不符 {row.get('SURVEY_DATES')!r}") from ex
         out.append({"series": series, "date": d, "value": v, "source": "boj",
                     "unit": unicodedata.normalize("NFKC", row.get("UNIT_J") or "")})
+    return pd.DataFrame(out, columns=COLUMNS)
+
+
+def fetch_fred(session: requests.Session, series_id: str, api_key: str, start: date | None = None,
+               retries: int = 3, backoff: float = 2.0) -> requests.Response:
+    """取 FRED 观测值。失败时只抛出异常类型与状态码，URL（含 key）不进入日志、账本和异常链。"""
+    params = {"series_id": series_id, "api_key": api_key, "file_type": "json"}
+    if start:
+        params["observation_start"] = start.isoformat()
+    failure = ""
+    for attempt in range(retries):
+        try:
+            r = session.get(FRED_URL, params=params, timeout=60)
+        except requests.RequestException as ex:
+            failure = type(ex).__name__
+        else:
+            if r.status_code < 500:
+                return r
+            failure = f"HTTP {r.status_code}"
+        log.warning("FRED %s 请求失败（%s），第 %d 次", series_id, failure, attempt + 1)
+        time.sleep(backoff ** attempt)
+    raise RuntimeError(f"FRED {series_id} 请求失败：{failure}")
+
+
+def parse_fred_json(content: bytes, series: str, unit: str) -> pd.DataFrame:
+    obs = json.loads(content.decode("utf-8")).get("observations")
+    if obs is None:
+        raise MacroParseError("fred: 响应没有 observations")
+    out: list[dict[str, Any]] = []
+    for o in obs:
+        v = _to_float(o.get("value"))
+        if v is not None:
+            out.append({"series": series, "date": datetime.strptime(o["date"], "%Y-%m-%d").date(), "value": v,
+                        "source": "fred", "unit": unit})
     return pd.DataFrame(out, columns=COLUMNS)

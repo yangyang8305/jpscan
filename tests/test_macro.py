@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 
-from jpscan.connectors.macro import (BOJ_SERIES, MacroParseError, boj_url, parse_boj_csv, parse_jgb_csv,
+from jpscan.connectors.macro import (BOJ_SERIES, MacroParseError, boj_url, parse_boj_csv, parse_fred_json, parse_jgb_csv,
                                      parse_wareki)
 
 
@@ -99,3 +99,12 @@ def test_boj_url_keeps_at_sign_and_adds_start():
     db, code = BOJ_SERIES["boj_basic_loan_rate"]
     assert boj_url(db, code) == "https://www.stat-search.boj.or.jp/api/v1/getDataCode?db=IR01&code=MADR1Z@D&format=csv"
     assert boj_url(db, code, "202610").endswith("&format=csv&startDate=202610")
+
+
+def test_parse_fred_json():
+    body = b'{"observations":[{"date":"2026-11-02","value":"123.45"},{"date":"2026-11-03","value":"."}]}'
+    df = parse_fred_json(body, "usd_jpy", "JPY/USD")
+    assert df["date"].tolist() == [date(2026, 11, 2)] and df["value"].tolist() == [123.45]
+    assert df.loc[0, "source"] == "fred"
+    with pytest.raises(MacroParseError):
+        parse_fred_json(b'{"error_message":"x"}', "usd_jpy", "JPY/USD")
