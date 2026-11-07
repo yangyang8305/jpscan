@@ -151,6 +151,9 @@ def screen_day(store, params: dict, d: date, run_id: str, write: bool = True) ->
         df["news_status"] = status
     else:
         df["news_status"] = df["news_status"].fillna("no_events" if status != "unknown" else "unknown")
+    if status != "unknown" and "cause_proxy_earnings" in df.columns:
+        # 公告数据覆盖当日时，下跌原因才算检查过；否则 rev_cause_class 留空，理由里列为未检查
+        df["rev_cause_class"] = df["cause_proxy_earnings"].fillna(False).astype(float)
     ext = external_lists(store, d, params)
     if "capital_cost" in ext:
         df["jpx_capital_cost_disclosed"] = df["Code"].isin(ext["capital_cost"])
