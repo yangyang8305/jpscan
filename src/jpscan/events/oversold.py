@@ -98,6 +98,7 @@ def build_oversold(feat: pd.DataFrame, disclosures: pd.DataFrame | None, params:
     d["cause_wait"] = cause_wait(d)
     d["hard_fail"] = d["hard_fail_event"].astype(bool) | d["negative_equity"].fillna(False).astype(bool)
     d["intact_ok"] = d["intact_status"].eq("pass") & ~d["hard_fail"]
+    d["oversold_candidate"] = d["intact_ok"] & ~d["cause_wait"]    # 还需 rev_1m 命中核心池最差 10%，那一步在 screener 里判断
     # ---- 企稳（只展示）----
     above_low = (d["C"] > d["low_since_20d"]).astype(int)
     run_id = (above_low != above_low.groupby(d["Code"]).shift()).cumsum()
@@ -108,7 +109,7 @@ def build_oversold(feat: pd.DataFrame, disclosures: pd.DataFrame | None, params:
     d["stab_signals"] = s1.astype(int) + s2.fillna(False).astype(int) + s3.fillna(False).astype(int)
     d["stabilized"] = (d["stab_signals"] >= 2) & ~d["cause_wait"]
     out_cols = ["Code", "Date", "trigger", "trigger_type", "trigger_date", "days_since_trigger", "active", "event_move", "attr_type", "attr_category",
-                "intact_revision", "intact_dividend", "intact_remaining", "intact_distress", "intact_known", "intact_pass", "intact_status", "intact_ok", "hard_fail",
+                "intact_revision", "intact_dividend", "intact_remaining", "intact_distress", "intact_known", "intact_pass", "intact_status", "intact_ok", "oversold_candidate", "hard_fail",
                 "cause_wait", "cause_proxy_date", "stab_signals", "stabilized"]
     out = d[[c for c in out_cols if c in d.columns]].copy()
     out["Date"] = out["Date"].dt.date
