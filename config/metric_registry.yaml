@@ -2029,3 +2029,81 @@ families:
     independence_note: "与所有估值、质量指标的行业内秩相关绝对值不超过 0.15。"
     evidence_summary: "moderate：存在性好，样本老，近期扣成本后是否还在未知。10% 取自文献的最低十分位，不是调出来的。"
 
+# ---------- 门槛 ----------
+# hard：命中即移出；soft：降级或该指标不算命中；不得因为数据缺失而显示通过，未检查项必须列出。
+gates:
+  hard:
+    - {metric: gate_regulatory_red_flags, note: "结构化部分现在可用；文本项未检查"}
+    - {metric: liq_gate, note: "低于 watch 门槛移出；篮子只取 core"}
+    - {metric: gate_dilution, note: "仅 MS 权证部分；TDnet 接入前未检查"}
+  soft:
+    - gate_distress
+    - gate_sector_equity
+    - gate_one_off
+    - gate_div_cover
+    - gate_miss_then_bullish
+    - guid_remaining_growth
+    - gate_inorganic
+    - gate_disclosure_delay
+    - gate_guidance_absent
+  routing: [gate_sector_route]
+  unchecked_on_current_data: [gate_zombie, gate_debt_coverage, gate_peak_earnings, gate_tangible_book, rev_cause_class]
+
+# ---------- 篮子要求 ----------
+bucket_policy:
+  anchor_family: "必须 hit。该市场中此家族覆盖率低于 coverage_floor 时，该篮子在该市场暂停，不能跳过。"
+  required_when_covered: "覆盖率达到 coverage_floor 时必须 hit；不足时放行并标记低置信，同时写明未检查。"
+  at_least_one_of: "其中至少一个家族 hit；unknown 不算。全部低于 coverage_floor 时放行并标记低置信。"
+  must_not_fail: "这些家族不得为 fail；unknown 放行，但列入未检查。"
+  delay_note: "Free 上价格和财务都晚 12 周。delay_sensitive=true 的篮子在 Free 上只作研究和回放，不能代表今天的状态。"
+
+buckets:
+  B1:
+    name_zh: "低估反转"
+    goal_zh: "估值便宜，且有另一类证据说明不是单纯的便宜。"
+    anchor_family: relative_value
+    required_when_covered: []
+    at_least_one_of: [business_quality, shareholder_yield, guidance_change, capital_action]
+    must_not_fail: [business_quality, guidance_change]
+    gates: [hard, soft]
+    excluded_sectors: [保険業]
+    delay_sensitive: false
+    why: "G2-06、G2-07 与 Chou-Ko-Rhee 2023 都指向价值要与盈利或指引合用；G2-17 显示低 PBR 上修后更强。"
+    measured_liquid_core: {total: 187, Prime: 164, Standard: 22, Growth: 1, note: "只含 shareholder_yield 与 guidance_change 两个确认家族"}
+  B2:
+    name_zh: "指引改善"
+    formerly: "质量成长"
+    goal_zh: "公司刚把未来利润说得更好，生意本身也说得过去，且没有贵到离谱。"
+    anchor_family: guidance_change
+    required_when_covered: [business_quality]
+    at_least_one_of: []
+    must_not_fail: []
+    valuation_cap: {metric: val_fwd_ep, rule: "不在同业最差 30%"}
+    gates: [hard, soft]
+    excluded_sectors: [銀行業, 保険業, 証券･商品先物取引業, その他金融業]
+    delay_sensitive: true
+    why: "历史增长没有日本证据（growth_hist_cagr），成长由指引信号表达；文档 B2 的 CAGR 门槛和进捗率必要条件取消。金融业排除沿用 S06。"
+    measured_liquid_core: {total: 83, Prime: 51, Standard: 24, Growth: 8, note: "business_quality 覆盖不足，当前放行并标低置信"}
+  B3:
+    name_zh: "错杀修复"
+    goal_zh: "短期比同行跌得多，但业绩预期和分红没有同等恶化。"
+    anchor_family: price_dislocation
+    required_when_covered: []
+    at_least_one_of: []
+    must_not_fail: [guidance_change]
+    extra_gates: [rev_intact_test, rev_cause_class]
+    gates: [hard, soft]
+    excluded_sectors: []
+    delay_sensitive: true
+    why: "1 个月反转和无消息下跌有证据；原错杀分中的 R 和 F1 没有。TDnet 接入前归因项显示未归因，这个篮子的结论要打折。"
+    measured_liquid_core: {total: 186, Prime: 123, Standard: 37, Growth: 26, note: "rev_cause_class 未检查；只扣了 guidance_change 的 fail"}
+  B0:
+    name_zh: "特殊情形"
+    goal_zh: "TOB、MBO、行动型股东、分拆等事件单独呈现，不评分。"
+    anchor_family: null
+    trigger_metrics: [evt_tob_mbo_watch, own_activist]
+    delay_sensitive: true
+    why: "事件稀少，没有样本外预测模型。需要 TDnet 或 EDINET，当前数据下为空。"
+
+buckets_measured_note: "以上为 2026-08-14 单日、流动性核心池（1920 只）内、扣除可用硬门槛（106 只命中，其中核心池 33 只）后的命中数，未用 S17 回退，未扣 soft 门槛中尚不能算的项。重叠：B1 与 B2 35 只，B1 与 B3 8 只，B2 与 B3 6 只。该日处于决算季，事件型数字偏高。这只是规模检查，不是收益证据。"
+
