@@ -13,6 +13,7 @@
 | delisted                 | 上場廃止銘柄一覧（HTML 表）                                  | jpx_delisted                 |
 | supervision              | 監理・整理銘柄：現在の指定状況 + 指定履歴（HTML 表）          | jpx_supervision              |
 | new_listings             | 新規上場会社情報（HTML 表）                                  | jpx_new_listings             |
+| improvement_period       | 改善期間該当銘柄一覧 Companies_ImprovementPeriod_JP_YYMMDD.xlsx（自页面发现） | jpx_improvement_period |
 
 约定：
 - 本模块的解析函数均为纯函数（bytes / str → DataFrame），不联网；抓取由 `JPXFiles.fetch` 完成，原始内容经
@@ -44,6 +45,7 @@ from bs4 import BeautifulSoup
 
 from ..ledger import Ledger
 from ..paths import DataPaths
+from ..util.common import sha256_bytes
 from .base import RawSink, get_with_retry, http_session
 
 log = logging.getLogger("jpscan.jpx")
@@ -65,6 +67,7 @@ URLS: dict[str, str] = {
     "supervision_current": BASE + "/listing/market-alerts/supervision/index.html",
     "supervision_history": BASE + "/listing/market-alerts/supervision/01.html",
     "new_listings": BASE + "/listing/stocks/new/index.html",
+    "improvement_page": BASE + "/listing/market-alerts/improvement-period/index.html",
 }
 
 
@@ -85,6 +88,7 @@ TABLES: dict[str, TableSpec] = {
     "delisted": TableSpec("jpx_delisted", ["delist_date", "Code"], "all"),
     "supervision": TableSpec("jpx_supervision", ["designated_date", "Code", "kind"], "all"),
     "new_listings": TableSpec("jpx_new_listings", ["listing_date", "Code"], "all"),
+    "improvement_period": TableSpec("jpx_improvement_period", ["published_date", "Code", "criterion"], "all"),
 }
 DATASETS: list[str] = list(TABLES)
 
@@ -142,8 +146,14 @@ class JPXFiles:
             raise JPXFetchError(url, r.status_code)
         return r.content
 
-    def save(self, dataset: str, key: str, content: bytes, ext: str, url: str) -> Path:
-        return self.sink.save_bytes(dataset, key, content, ext, params={"url": url}, http_status=200)
+    def save(self, dataset: str, stem: str, content: bytes, ext: str, url: str, fetched: date) -> Path | None:
+        """原始层落盘（raw/jpx/{dataset}/{yyyymm}/{stem}_{yyyymmdd}_{哈希前 8 位}{ext}）。
+        账本已有同内容（月次文件在下次发布前每次都一样）时不重复落盘，返回 None。"""
+        digest = sha256_bytes(content)
+        if self.ledger.raw_exists_hash(digest):
+            return None
+        key = f"{stem}_{fetched:%Y%m%d}_{digest[:8]}"
+        return self.sink.save_bytes(dataset, key, content, ext, params={"url": url}, http_status=200, subdir=f"{fetched:%Y%m}")
 
     def quarantine(self, dataset: str, key: str, content: bytes, reason: str) -> Path:
         return self.sink.quarantine(dataset, key, content, reason)
@@ -343,6 +353,16 @@ def find_kessan_links(html: str | bytes) -> list[str]:
 def find_price_limit_links(html: str | bytes) -> list[str]:
     """制限値幅 页 → 当日 CSV（MMDD.csv、MMDD_ETF.csv）。"""
     return find_links(html, r"/\d{4}(_[A-Za-z]+)?\.csv$")
+
+
+def find_year_pages(html: str | bytes) -> dict[str, str]:
+    """页面的バックナンバー下拉框 → {"2025": 绝对 URL, ...}（archives-NN 的编号每年顺延，故按年份而不是文件名识别）。"""
+    out: dict[str, str] = {}
+    for opt in _soup(html).select("select.backnumber option"):
+        m = re.search(r"(\d{4})年", opt.get_text(strip=True))
+        if m and opt.get("value"):
+            out[m.group(1)] = urljoin(BASE, opt["value"])
+    return out
 
 
 # ----------------------------------------------------------------------------------------------
@@ -884,6 +904,74 @@ def parse_new_listings(html: str | bytes) -> pd.DataFrame:
                   dates=["listing_date", "approval_date"],
                   nums=["offer_price", "public_kshares", "secondary_kshares", "oa_kshares", "trading_unit"],
                   keys=TABLES["new_listings"].keys)
+
+
+# ----------------------------------------------------------------------------------------------
+# 10. 改善期間該当銘柄一覧（xlsx；矩阵：行=銘柄，列=上場維持基準，单元格=改善期間の末日）
+# ----------------------------------------------------------------------------------------------
+IMPROVEMENT_COLUMNS = ["published_date", "Code", "name", "market", "criterion", "period_end_date", "period_end_text", "note",
+                       "source_file"]
+CRITERION_UNKNOWN = "不明"
+
+
+def find_improvement_link(html: str | bytes) -> str | None:
+    """改善期間該当銘柄 页 → 当前 xlsx（文件名含公表日，且会更换，故每次从页面发现）。"""
+    links = find_links(html, r"improvement-period/.*\.xlsx?$")
+    return links[0] if links else None
+
+
+def parse_improvement_period(content: bytes, source_file: str = "") -> pd.DataFrame:
+    """矩阵 → 长表，一行 = (公表日, Code, 未适合的基准)。
+
+    基准列为 市場区分 与 備考 之间的所有列（表头合并单元格的第二格向前填充）；单元格是日期 → period_end_date，
+    其他非空文本原样存 period_end_text。銘柄没有任何基准单元格时仍保留一行 criterion="不明"，以免硬排除（X10）漏掉。
+    published_date 取标题「YYYY年M月D日公表」，缺失则取文件名 _YYMMDD。
+    """
+    _, rows = _xlsx_sheets(content)[0]
+    h = next((i for i, r in enumerate(rows) if _norm(_cell(r, 0)) == "コード"), None)
+    if h is None:
+        raise ValueError(f"{source_file}: 未找到表头 コード")
+    hdr = [_norm(c) for c in rows[h]]
+    if "市場区分" not in hdr:
+        raise ValueError(f"{source_file}: 表头不完整: {hdr}")
+    i_name = hdr.index("銘柄名") if "銘柄名" in hdr else None
+    i_market = hdr.index("市場区分")
+    i_note = hdr.index("備考") if "備考" in hdr else len(hdr)
+    criteria: list[tuple[int, str]] = []
+    for i in range(i_market + 1, i_note):
+        name = hdr[i] or (criteria[-1][1] if criteria else "")
+        if name:
+            criteria.append((i, name))
+    published = None
+    for r in rows[:h]:
+        for v in r:
+            m = re.search(r"\d{4}年\d{1,2}月\d{1,2}日\s*公表", unicodedata.normalize("NFKC", v)) if isinstance(v, str) else None
+            if m and published is None:
+                published = _date(m.group(0))
+    if published is None:
+        m = re.search(r"_(\d{2})(\d{2})(\d{2})\.xlsx?$", source_file)
+        published = date(2000 + int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+    if published is None:
+        raise ValueError(f"{source_file}: 未找到公表日")
+    recs: list[dict[str, Any]] = []
+    for r in rows[h + 1:]:
+        code = norm_code(_cell(r, 0))
+        if code is None:
+            continue
+        base = {"published_date": published, "Code": code, "name": _clean(_cell(r, i_name)), "market": _clean(_cell(r, i_market)),
+                "note": _clean(_cell(r, i_note)), "source_file": source_file}
+        found: dict[str, dict[str, Any]] = {}
+        for i, crit in criteria:
+            v = _cell(r, i)
+            text = _clean(v)
+            if text is None or crit in found:
+                continue
+            d = _date(v)
+            found[crit] = {"criterion": crit, "period_end_date": d, "period_end_text": None if d else text}
+        for item in found.values() or [{"criterion": CRITERION_UNKNOWN, "period_end_date": None, "period_end_text": None}]:
+            recs.append({**base, **item})
+    return _frame(recs, IMPROVEMENT_COLUMNS, text=["name", "market", "criterion", "period_end_text", "note", "source_file"],
+                  dates=["published_date", "period_end_date"], keys=TABLES["improvement_period"].keys)
 
 
 def month_partition(values: Iterable[Any]) -> list[str]:
