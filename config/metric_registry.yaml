@@ -1591,10 +1591,10 @@ metrics:
     plain_zh: "公司预计的利润够不够付它承诺的分红。"
     purpose: quality_risk
     direction: flag
-    formula: "FDivAnn/FEPS>1 且利润预想下降时 yield_dividend 不算命中；FEPS<=0 且仍有分红单独标记；有 DOE 或累进政策时展示说明。"
-    data_needed: "financial_statements.FDivAnn, FEPS"
+    formula: "fc(FDivAnn)/fc(FEPS)>1 时 yield_dividend 不算命中；fc(FEPS)<=0 且仍有分红单独标记，同样不算命中；有 DOE 或累进政策时只展示说明，不改变判断。"
+    data_needed: "financial_statements.FDivAnn, NxFDivAnn, FEPS, NxFEPS"
     available_on_free_plan: true
-    free_plan_note: "FEPS>0 且有分红 n=2352：派息率>100% 占 4.7%。"
+    free_plan_note: "FEPS>0 且有分红 n=2352：派息率>100% 占 4.7%。核心池股息前 30% 中约 8% 被这道门拦下。「利润预想下降」这个条件没有定义，已删除。"
     stale_on_free: false
     unlocks_with: "DOE、累进政策：TDnet 文本"
     sector_rules: "J-REIT 不在宇宙内。"
