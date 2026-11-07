@@ -1475,18 +1475,18 @@ metrics:
     plain_zh: "持续亏损又持续失血的公司先降级，避免永久损失。"
     purpose: exclusion_filter
     direction: flag
-    formula: "降级：最近两个 FY 均 OP<0 且 CFO<0；或 ShEq/TA 处于行业内最低 10%。不实现 Altman Z（Free 缺留存收益、营运资本，算出来会错）。"
-    data_needed: "financial_statements.OP, CFO, ShEq, TA"
+    formula: "降级：最近两个 FY 均 OP<0 且 CFO<0。不实现 Altman Z（Free 缺留存收益、营运资本，算出来会错）。自有资本比率只在 gate_sector_equity 判断一次。"
+    data_needed: "financial_statements.OP, CFO"
     available_on_free_plan: true
-    free_plan_note: "ShEq/TA 现在可算；两年条件须等回填。"
+    free_plan_note: "两年条件须等回填。"
     stale_on_free: false
     unlocks_with: "回填到 2025-05"
-    sector_rules: "金融业跳过。行业内比较，不用全局固定线。"
+    sector_rules: "金融业跳过。"
     status: gate
     planned_status: gate
     evidence_strength: weak
     evidence: "Altman Z、Ohlson O 的日本回报检验未找到。Bradrania 等 2023 提示异象多集中在低质量股（未单列日本）。门槛出于风险控制，不是收益证据。"
-    why: "目的是避免永久损失，不是选 alpha。10% 为先验。"
+    why: "目的是避免永久损失，不是选 alpha。"
 
   - id: gate_zombie
     family: risk_gates
@@ -1555,7 +1555,7 @@ metrics:
     plain_zh: "判断负债是否危险时要和同行比，不能全市场一条线。"
     purpose: quality_risk
     direction: flag
-    formula: "EqAR 处于行业内最低 10% 时降级；不用全局 30% 线。"
+    formula: "EqAR 处于行业内最低 10% 且 EqAR<0.30 时降级。"
     data_needed: "financial_statements.EqAR；security_master.S33"
     available_on_free_plan: true
     free_plan_note: "决算文档填写率 99-100%；修订文档为空，须向前延续。"
@@ -1564,9 +1564,9 @@ metrics:
     sector_rules: "金融业排除此项。EqAR<30% 的比例：全体 14.8%、不动产 42.5%、电气燃气 40.7%、石油 50%、航空 40%。"
     status: gate
     planned_status: gate
-    evidence_strength: moderate
-    evidence: "H5 的去劣立场有文献支持；具体线无证据。实测见 sector_rules：全局门槛主要在淘汰行业特征。"
-    why: "替代 Q4 的 30% 全局门槛和 value.trap 的 20% 线。"
+    evidence_strength: weak
+    evidence: "H5 的去劣立场有文献支持，具体线没有证据。实测 2026-08-14：ShEq/TA 与 EqAR 的 Pearson 1.00，最低 10% 名单几乎完全重合，所以不再算两次。行业内最低 10% 必然淘汰每个行业 10%，分界中位 EqAR 33%，鉱業 53%、ガラス･土石 46%；名单 337 只中 61 只 EqAR>=30%，这些公司并不危险。"
+    why: "替代 Q4 的 30% 全局门槛和 value.trap 的 20% 线。0.30 只用来收窄行业内规则，不单独生效；沿用 params 的 f4_equity_ratio_min，不新造数字。"
 
   - id: gate_one_off
     family: risk_gates
