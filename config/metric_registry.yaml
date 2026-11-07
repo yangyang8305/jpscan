@@ -14,7 +14,7 @@
 #   status:        score（计入家族判断与排序）/ gate（只用于排除或降级）/ display（只展示，不影响结果）/ excluded（不计算或不使用）。
 #                  available_on_free_plan=false 且 status=display 表示现阶段卡片上显示「未检查」，不得当作通过。
 #   planned_status: 数据到位且通过指标评估工具检验后的状态；与 status 相同表示不打算改变。
-#   evidence_strength: strong / moderate / weak / none（none 含「未找到」，不等于「已证伪」）。
+#   evidence_strength: strong / moderate / weak / none（none 含「未找到」，不等于「已证伪」）/ not_return_evidence（本来就不靠收益证据：制度事实、可执行性约束或口径防错）。
 #   evidence:      G-xx 指规划文档附录 G 的编号；其余给出 URL；括号注明阅读程度。
 # 单位陷阱（已实测）：valuation_daily.MktCap 与 prices_daily.MktCap 单位为百万円，financial_statements 金额为円；
 #   prices_daily.MktCap 含库存股，valuation_daily.MktCap 不含；FwdROE、ROE、EqAR 是小数不是百分比。
@@ -1464,7 +1464,7 @@ metrics:
     sector_rules: "ChgNoASRev=true 未必是坏事，只标记。"
     status: gate
     planned_status: gate
-    evidence_strength: strong
+    evidence_strength: not_return_evidence
     evidence: "这是制度事实（G1 系列），不是统计预测。"
     why: "成本低、误判代价高，必须硬排除。"
 
@@ -1664,7 +1664,7 @@ metrics:
     sector_rules: "无。"
     status: gate
     planned_status: gate
-    evidence_strength: weak
+    evidence_strength: not_return_evidence
     evidence: "无收益证据，属口径防错。"
     why: "Free 已有的低成本防线，文档尚未使用。"
 
@@ -1704,7 +1704,7 @@ metrics:
     sector_rules: "见 sector_overrides。"
     status: gate
     planned_status: gate
-    evidence_strength: moderate
+    evidence_strength: not_return_evidence
     evidence: "实测字段缺失：银行 OP、FOP 100% 为空；保险 OP 64%、FOP 71%；五大商社 FOP 5/5 为空；证券 FEPS 81% 为空；IFRS FOdP 100% 为空。无收益证据，属口径防错。"
     why: "不路由的话，成长和质量维度会静默漏掉整个行业，或用错误口径排序。"
 
@@ -1724,7 +1724,7 @@ metrics:
     sector_rules: "证券业走 TTM 回退。"
     status: gate
     planned_status: gate
-    evidence_strength: moderate
+    evidence_strength: not_return_evidence
     evidence: "实测见 free_plan_note；无收益证据。"
     why: "空值比例随行业变化很大，错误填补会让行业排序产生系统偏差。"
 
@@ -1846,7 +1846,7 @@ metrics:
     sector_rules: "Standard 统计上便宜的股票大量过不了 core：PBR<1 占 53%，但 80% 过不了。"
     status: gate
     planned_status: gate
-    evidence_strength: strong
+    evidence_strength: not_return_evidence
     evidence: "这是可执行性约束，不是 alpha：G2-32 日本非流动性溢价偏小；KAKEN 20K01746 反转集中在超小型股。具体数值来自资金规模计算，没有实证。"
     why: "没有它，所有反转和小盘回测都会被高估。门槛应按用户实际资金设置。"
 
