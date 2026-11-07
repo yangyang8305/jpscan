@@ -734,3 +734,15 @@ def test_run_no_code_table_keeps_large_holding_with_issuer(env):
             doc_row("S100TST6", 2, sec=None, dtype="120", csv_flag="0")]
     run_job(env, FakeSession(router=router_for({"2026-06-26": rows})))
     assert list(env.store.read("staging", "edinet_documents")["docID"]) == ["S100TST4"]
+
+
+def test_run_newest_first_walks_dates_backwards(env):
+    seen = []
+
+    class StubClient:
+        def list_documents(self, d, use_cache=False):
+            seen.append(d.isoformat())
+            return []
+
+    ingest_edinet.run(env.settings, env.paths, env.ledger, env.store, "2026-06-24", "2026-06-26", client=StubClient(), newest_first=True)
+    assert seen == ["2026-06-26", "2026-06-25", "2026-06-24"]

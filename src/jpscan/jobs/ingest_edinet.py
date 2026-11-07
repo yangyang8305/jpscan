@@ -205,8 +205,11 @@ def _load_code_map(store: Store) -> dict[str, str]:
 
 def run(settings: Settings, paths: DataPaths, ledger: Ledger, store: Store, start: date | str, end: date | str,
         doc_types: Iterable[str] | None = None, download_types: str | Iterable[int | str] | None = "5", listed_only: bool = True,
-        client: EdinetClient | None = None, resume: bool = True) -> dict[str, int]:
-    """逐日采集 [start, end]。缺 Key 抛 EdinetKeyMissing；Key 无效抛 EdinetAuthError；其他错误记入账本并继续。"""
+        client: EdinetClient | None = None, resume: bool = True, newest_first: bool = False) -> dict[str, int]:
+    """逐日采集 [start, end]。缺 Key 抛 EdinetKeyMissing；Key 无效抛 EdinetAuthError；其他错误记入账本并继续。
+
+    newest_first=True：从 end 往回取。长回填中断时，已有数据是「最近 N 年的完整切片」。
+    """
     start_d, end_d = to_date(start), to_date(end)
     if start_d is None or end_d is None:
         raise ValueError("start and end are required")
@@ -225,8 +228,9 @@ def run(settings: Settings, paths: DataPaths, ledger: Ledger, store: Store, star
     stats = {"days": 0, "listed": 0, "documents": 0, "downloaded": 0, "parsed": 0, "detail_rows": 0, "key_items": 0, "not_found": 0, "errors": 0}
     buffer = _DetailBuffer(store, ledger)
     try:
-        d = start_d
-        while d <= end_d:
+        n_days = (end_d - start_d).days + 1
+        days = [start_d + timedelta(days=i) for i in range(n_days)]
+        for d in reversed(days) if newest_first else days:
             key = d.isoformat()
             try:
                 rows = client.list_documents(d, use_cache=key in done_lists)
@@ -236,7 +240,6 @@ def run(settings: Settings, paths: DataPaths, ledger: Ledger, store: Store, star
                 log.warning("edinet list %s failed: %s", key, e)
                 ledger.mark("edinet_list", key, "error", error=str(e)[:200])
                 stats["errors"] += 1
-                d += timedelta(days=1)
                 continue
             stats["days"] += 1
             stats["listed"] += len(rows)
@@ -249,7 +252,6 @@ def run(settings: Settings, paths: DataPaths, ledger: Ledger, store: Store, star
                 stats["documents"] += write_documents(store, df, listed_only)
             if d < today:   # 当日一览还会追加，不算完成
                 ledger.mark("edinet_list", key, "ok", len(rows))
-            d += timedelta(days=1)
     finally:
         buffer.flush()
         stats["detail_rows"] += buffer.rows
