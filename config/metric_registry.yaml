@@ -1179,7 +1179,7 @@ metrics:
     free_plan_note: "当日覆盖 99.8%。最差 10% 的分界约 −8.6%，命中 369 只，其中流动性核心池内 207 只。"
     stale_on_free: true
     unlocks_with: "实盘：J-Quants Light 以上去掉 12 周延迟"
-    sector_rules: "无行业例外，但行业整体下跌不会触发，这是有意的。"
+    sector_rules: "无行业例外，但行业整体下跌不会触发，这是有意的。实质偏向高波动股：核心池按 60 日波动五分组，命中率 0%、2.6%、5.5%、10.4%、31.5%，所以 validation 要与波动标准化版本对照。"
     status: score
     planned_status: score
     evidence_strength: moderate
@@ -1901,7 +1901,7 @@ metrics:
 # hit_rules.rule：
 #   peer_best_pct    在同业（params.peer_group：S33，不足 20 只回退 S17）内排在最好的前 value 比例
 #   group_best_pct   在 group 指定的分组内排在最好的前 value 比例；排名池 rank_pool_days 个交易日，window_days 只决定信号是否有效
-#   universe_best_pct 在全市场排在最好的前 value 比例
+#   core_best_pct    在流动性核心池内排在最好的前 value 比例
 #   min_value        指标值 >= value
 #   event_up_top_pct 窗口内上调事件中，幅度排在前 value 比例且幅度>=min_abs；窗口内上调事件少于 min_events 时只看 min_abs；
 #                    noise_floor 决定算不算事件，口径由 noise_floor_basis 写明（implied_fnp_change：相对隐含净利的变动）
@@ -2030,7 +2030,7 @@ families:
       min_known: 1
       min_hits: 1
       hit_rules:
-        - {metric: rev_1m, rule: universe_best_pct, value: 0.10}
+        - {metric: rev_1m, rule: core_best_pct, value: 0.10}
     fail_rule: null
     measured:
       known_share: {Prime: 1.00, Standard: 1.00, Growth: 0.99}
@@ -2334,6 +2334,7 @@ validation:
     - "家族独立性：家族间命中名单重合与秩相关；相关超过 0.6 的两个家族合并。"
     - "门槛：被排除和未被排除的股票后续收益差；没有差别的门槛取消。"
     - "基准：French 日本因子，判断是否只是在复现已知因子。"
+    - "rev_1m：原始版与波动标准化版 x/(vol60*sqrt(21)) 对照（核心池内两者前 10% 重合约 62%），两者都不用于调参。"
     - "F-Score 回填验收：有 2 个 FY 后实测 qual_fscore7>=6 的通过率，须在 25-45%，超出就调 min_value 并升版本；同时复核 fail 线 F<=2 的触发率。这是分布取值，不是收益结果，changelog 要如实记录。"
   promotion_rule: "display 转 score 须满足：目标数据到位，至少 3 个不重叠子期方向一致，样本外扣成本后为正，且相对同家族已有指标有增量。"
   demotion_rule: "score 转 display 须满足：样本外连续两次评估方向相反或扣成本后为零。"
