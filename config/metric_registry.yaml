@@ -787,7 +787,7 @@ metrics:
     plain_zh: "公司要完成全年目标，剩下几个季度必须比去年同期多赚多少。"
     purpose: mispricing_oversold
     direction: lower_better
-    formula: "(FOP − 累计OP)/(OP_FY(prev) − 上年同期累计OP) − 1；分母<=0 时输出日元缺口。银行和无 OP 的 IFRS 改用 NP 与 FNP。"
+    formula: "(fc(FOP) − 累计OP)/(OP_FY(prev) − 上年同期累计OP) − 1；分母<=0 时输出日元缺口。无 OP 的公司（银行等）改用 NP 与 fc(FNP)。判定（先验，未经检验）：仅 2Q、3Q 判定，必要增益率>=0.50 标记；分母<=0 时缺口/|fc(FOP)|>0.5 标记；1Q 不判定。"
     data_needed: "financial_statements.OP, FOP, NP, FNP, CurPerType, 上年同期记录"
     available_on_free_plan: true
     free_plan_note: "须回填到上年同期，只需一年对比，正好适配 Free 窗口。"
@@ -827,8 +827,8 @@ metrics:
     plain_zh: "去年没完成目标，今年却又定了很激进的增长目标。"
     purpose: quality_risk
     direction: flag
-    formula: "上期 OP_FY<FOP_initial 且 新 FOP 增速>行业中位*2 时，指引信号打折。"
-    data_needed: "financial_statements 两个 FY 周期"
+    formula: "上期 OP_FY<FOP_initial 且新 fc(FOP) 增速 > max(2*行业中位增速, 0.10) 时标记，guid_forecast_innovation 因此不算命中（unless_gate）。用 max 是因为行业中位为负时「中位*2」会反向放宽。"
+    data_needed: "financial_statements 两个 FY 周期（OP、NxFOP）及最新 fc(FOP)"
     available_on_free_plan: true
     free_plan_note: "须等回填。"
     stale_on_free: false
