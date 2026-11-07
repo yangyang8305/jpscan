@@ -27,9 +27,7 @@ COLUMNS = ["news_id", "source", "tier", "published_at", "published_date", "title
 
 _TAG = re.compile(r"<[^>]+>")
 _SPACE = re.compile(r"\s+")
-# Yahoo 标题末尾带发布媒体，如「…(東洋経済オンライン)」。媒体本身可能是上市公司（ITmedia 等），不能参与匹配。
-_YAHOO_MEDIA_SUFFIX = re.compile(r"[(（][^()（）]{2,40}[)）]\s*$")
-_CODE_LIKE = re.compile(r"[(（][0-9０-９]{3}[0-9A-Za-z０-９Ａ-Ｚ][)）]\s*$")
+_CODE_LIKE = re.compile(r"[0-9０-９]{3}[0-9A-Za-z０-９Ａ-Ｚ]")
 
 
 def load_feeds(path: Path) -> list[dict[str, str]]:
@@ -50,10 +48,22 @@ def clean_text(text: str | None) -> str:
 
 
 def title_for_matching(title: str) -> str:
-    """去掉 Yahoo 标题末尾的媒体名；末尾是显式代码（7203）时保留。"""
-    if _CODE_LIKE.search(title):
+    """去掉 Yahoo 标题末尾的发布媒体，如「…(東洋経済オンライン)」「…(テレビ朝日系（ANN）)」。
+
+    媒体本身可能是上市公司（ITmedia、テレビ朝日 等），不能参与匹配。末尾括号里像证券代码时保留。
+    """
+    s = title.rstrip()
+    if not s.endswith((")", "）")):
         return title
-    return _YAHOO_MEDIA_SUFFIX.sub("", title)
+    depth = 0
+    for i in range(len(s) - 1, -1, -1):
+        if s[i] in ")）":
+            depth += 1
+        elif s[i] in "(（":
+            depth -= 1
+            if depth == 0:
+                return title if _CODE_LIKE.search(s[i:]) else s[:i]
+    return title
 
 
 def _published(entry: Any) -> datetime | None:
@@ -63,10 +73,11 @@ def _published(entry: Any) -> datetime | None:
     return datetime.fromtimestamp(calendar.timegm(st), tz=timezone.utc).astimezone(JST)
 
 
-def _match(entry: Any, title: str, matcher: CompanyMatcher | None) -> tuple[list[str], str]:
+def _match(entry: Any, title: str, source: str, matcher: CompanyMatcher | None) -> tuple[list[str], str]:
     if matcher is None:
         return [], ""
-    codes, method = matcher.match_detail(title_for_matching(title))
+    text = title_for_matching(title) if source.startswith("yahoo_") else title
+    codes, method = matcher.match_detail(text)
     corp = clean_text(entry.get("dc_corp"))      # PR TIMES 的发布公司名
     corp_code = matcher.match_name(corp) if corp else None
     if corp_code:
@@ -92,7 +103,7 @@ def parse_feed(content: bytes, feed: dict[str, str], matcher: CompanyMatcher | N
         if ts is None:
             n_undated += 1
             continue
-        codes, method = _match(e, title, matcher)
+        codes, method = _match(e, title, feed["source"], matcher)
         rows.append({
             "news_id": news_id(link),
             "source": feed["source"],

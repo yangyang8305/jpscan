@@ -48,6 +48,7 @@ def test_aliases_strip_legal_form_and_holding_suffix():
     assert aliases_for("ダミー精密ＨＤ") == ["ダミー精密HD", "ダミー精密"]
     assert aliases_for("ダミー・ホールディングス") == ["ダミー・ホールディングス", "ダミー"]
     assert aliases_for("架空") == []
+    assert "ギフトHD" in aliases_for("ギフトホールディングス") and "ギフト" not in aliases_for("ギフトホールディングス")
 
 
 def test_match_by_alias(matcher):
@@ -188,6 +189,9 @@ def test_title_for_matching_strips_media_suffix_only():
     assert title_for_matching("架空自動車が上方修正(架空新聞)") == "架空自動車が上方修正"
     assert title_for_matching("某社が上方修正（9902）") == "某社が上方修正（9902）"
     assert title_for_matching("普通の見出し") == "普通の見出し"
+    assert title_for_matching("某社が値上げ(架空テレビ系（XYZ）)") == "某社が値上げ"
+    assert title_for_matching("某社の決算(証券コード:9902)") == "某社の決算(証券コード:9902)"
+    assert title_for_matching("閉じ括弧だけ)") == "閉じ括弧だけ)"
 
 
 def test_parse_yahoo_feed(matcher):
@@ -207,6 +211,13 @@ def test_parse_yahoo_feed(matcher):
     # 标题末尾的媒体名不参与匹配；feed 没给摘要就留空
     assert df.iloc[1]["matched_codes"] == "" and df.iloc[1]["match_method"] == ""
     assert df.iloc[1]["summary"] == ""
+
+
+def test_media_suffix_is_kept_for_non_yahoo_sources(matcher):
+    from jpscan.connectors.news_rss import parse_feed
+    xml = YAHOO_XML.replace("無関係な話題(モックパーツ)".encode(), "協業のお知らせ(モックパーツ)".encode())
+    df, _ = parse_feed(xml, FEED_P, matcher)
+    assert df.iloc[1]["matched_codes"] == "99020"
 
 
 def test_parse_prtimes_rdf_uses_corp_field(matcher):
@@ -252,7 +263,6 @@ class _Session:
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    from jpscan import jobs  # noqa: F401
     from jpscan.config import Settings
     from jpscan.jobs import ingest_news
     from jpscan.ledger import Ledger
