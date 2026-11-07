@@ -1621,7 +1621,7 @@ metrics:
     free_plan_note: "Free 2 年窗口不足以判断，现阶段周期行业标注「周期位置未检查」。"
     stale_on_free: false
     unlocks_with: "EDINET 有報（一份含 5 年，未实测）或 J-Quants Light 以上"
-    sector_rules: "只用于海运、钢铁、非铁、化学、纸、石油、矿业及半导体相关。"
+    sector_rules: "只用于 cyclical_sectors 与 cyclical_codes（半导体相关不是 S33 行业）。"
     status: display
     planned_status: gate
     evidence_strength: weak
@@ -2077,6 +2077,7 @@ buckets:
     must_not_fail: [business_quality, guidance_change]
     gates: [hard, soft]
     excluded_sectors: [保険業]
+    cyclical_rule: "cyclical_sectors、cyclical_codes 内，shareholder_yield 不能作唯一确认，并强制标「周期位置未检查、低置信」，直到 gate_peak_earnings 可算：周期顶部时 E/P、B/M、股息率会同时偏好。"
     excluded_markets: [Growth]    # 这是判断，不是覆盖率：回填后 Growth 的估值覆盖已过 0.60，不写明就会自动启动
     delay_sensitive: true
     why: "G2-06、G2-07 与 Chou-Ko-Rhee 2023 都指向价值要与盈利或指引合用；G2-17 显示低 PBR 上修后更强。"
@@ -2128,6 +2129,8 @@ sector_defaults:
   empty_field_rule: "字段为空时记未知，不得填 0 或行业中位。"
 
 cyclical_sectors: [海運業, 鉄鋼, 非鉄金属, 化学, パルプ・紙, 石油･石炭製品, 鉱業]
+# 半导体不是 S33 行业，散在 電気機器、機械、金属製品。名单手工维护，不是穷尽列举。
+cyclical_codes: ["80350", "67230", "285A0", "61460", "34360"]   # 東京エレクトロン、ルネサス、キオクシア、ディスコ、SUMCO
 
 sector_overrides:
   銀行業:
