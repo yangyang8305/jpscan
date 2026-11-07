@@ -163,6 +163,9 @@ def _reason(fam: str, metric: str, item: dict, rule: dict, meta: dict, as_of: st
     value = round_value(metric, item.get("value"))
     val_str = fmt_value(metric, value)
     text, th, comp = _rule_text(metric, rule, item, label, plain, as_of, val_str)
+    if item.get("self_pct") is not None:
+        note = "（历史还不长，只作参考）" if item.get("self_low_conf") else ""
+        text = text.replace("（截至", f"相对它自己过去的水平排在 {_pct_str(item['self_pct'])}{note}。（截至", 1)
     return {
         "family": fam, "rule_id": f"{fam}.{metric}.{rule['rule']}", "metric": metric, "label_zh": label, "plain_zh": plain, "value": value, "threshold": th, "comparison": comp,
         "peer_pct": item.get("pct"), "self_pct": item.get("self_pct"), "self_low_confidence": item.get("self_low_conf"), "peer_group": item.get("grp"), "peer_n": item.get("n"),
@@ -268,7 +271,21 @@ def build_reasons(row, params: dict, reg: dict | None = None) -> dict:
         unknowns.append({"family": None, "rule_id": "data.free_plan_delay", "label_zh": "数据延迟", "text_zh": "当前用免费数据，价格和财务都晚 12 周，最近 12 周的变化看不到，结果只能用于研究和回放。", "needed_zh": "J-Quants Light 以上"})
 
     summary = _selection_summary(row, reasons, fam_rec, fam_cfg, reg) if bucket else None
-    return {"reasons": reasons, "counter_reasons": counters, "unknowns": unknowns, "selection_summary_zh": summary, "families_passed": sorted({r["family"] for r in reasons})}
+    return {"reasons": reasons, "counter_reasons": counters, "unknowns": unknowns, "selection_summary_zh": summary, "families_passed": sorted({r["family"] for r in reasons}),
+            "context": _context(row, as_of)}
+
+
+def _context(row, as_of: str) -> list[dict]:
+    """只展示、不参与判断的背景数字，写明实际用的期限：Free 只有 2 年，3 年增长常常算不出。"""
+    out = []
+    horizon = _get(row, "growth_horizon", "") or ""
+    g3, g1 = _get(row, "rev_cagr_3y"), _get(row, "rev_growth_1y")
+    if horizon == "3y" and g3 is not None:
+        out.append({"metric": "rev_cagr_3y", "value": round(float(g3), 4), "horizon": "3y", "text_zh": f"过去 3 年收入年均增长 {g3 * 100:.1f}%（只作背景，不参与筛选）。"})
+    elif horizon == "1y" and g1 is not None:
+        extra = "这一年决算期不是 12 个月，已按天数折算。" if bool(_get(row, "fy_irregular", False)) else ""
+        out.append({"metric": "rev_growth_1y", "value": round(float(g1), 4), "horizon": "1y", "text_zh": f"最近 1 年收入增长 {g1 * 100:.1f}%（只有 2 年数据，算不出 3 年增长；只作背景，不参与筛选）。{extra}"})
+    return out
 
 
 def _family_fail(fam, fam_name, rec, as_of, metrics_meta) -> dict:

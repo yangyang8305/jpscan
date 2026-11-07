@@ -55,6 +55,8 @@ def _allowed(r: dict) -> list[float]:
         vals.append(round(r["peer_pct"] * 100, 1))
     if r.get("peer_n") is not None:
         vals.append(float(r["peer_n"]))
+    if r.get("self_pct") is not None:
+        vals.append(round(r["self_pct"] * 100, 1))
     for d in (r.get("as_of"), r.get("detail", {}).get("event_date")):
         if d:
             vals += [float(x) for x in str(d).split("-")]
@@ -198,6 +200,25 @@ def test_selected_stock_has_empty_exclusion_reason(scored):
     assert scored.loc[1, "exclusion_reason_zh"] == ""
     assert isinstance(scored.loc[1, "family_status"], str)
     json.loads(scored.loc[1, "family_status"])
+
+
+def test_self_history_is_labelled_low_confidence_when_short():
+    df = universe()
+    for m in ("val_pbr", "val_fwd_ep", "val_ocf_yield", "yield_dividend", "evt_dividend_change"):
+        df = make_excellent(df, 1, m)
+    df["self_pct_pbr"] = np.nan
+    df["self_pct_low_conf"] = True
+    df.loc[1, "self_pct_pbr"] = 0.2
+    row = run_scoring(df, PARAMS).iloc[1]
+    r = next(x for x in json.loads(row["reasons"]) if x["metric"] == "val_pbr")
+    assert r["self_pct"] == 0.2 and r["self_low_confidence"] is True and "只作参考" in r["text_zh"]
+    assert r["threshold"] == 0.30       # 自身分位只展示，不改变命中条件
+
+
+def test_context_states_growth_horizon_honestly():
+    row = {"family_status": "{}", "bucket_check": "{}", "Date": "2026-08-14", "growth_horizon": "1y", "rev_growth_1y": 0.12, "soft_flags": ""}
+    ctx = build_reasons(row, PARAMS)["context"]
+    assert ctx[0]["horizon"] == "1y" and "算不出 3 年增长" in ctx[0]["text_zh"]
 
 
 def test_reasons_are_deterministic():
