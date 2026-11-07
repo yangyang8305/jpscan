@@ -2069,7 +2069,7 @@ buckets:
     excluded_sectors: [保険業]
     delay_sensitive: false
     why: "G2-06、G2-07 与 Chou-Ko-Rhee 2023 都指向价值要与盈利或指引合用；G2-17 显示低 PBR 上修后更强。"
-    measured_liquid_core: {total: 187, Prime: 164, Standard: 22, Growth: 1, note: "只含 shareholder_yield 与 guidance_change 两个确认家族"}
+    measured_liquid_core: {total: 186, Prime: 164, Standard: 22, Growth: 0, note: "Growth 因覆盖不足暂停；只含 shareholder_yield 与 guidance_change 两个确认家族"}
   B2:
     name_zh: "指引改善"
     formerly: "质量成长"
