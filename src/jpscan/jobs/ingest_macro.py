@@ -125,7 +125,7 @@ def _ingest_boj(ctx: _Run, sink: RawSink, want: set[str], latest: dict[str, date
                 sink.quarantine(series, f"{ctx.stamp}_{series}", r.content, str(ex))
                 raise
 
-        ctx.step(f"boj_{series}", fetch)
+        ctx.step(series, fetch)
 
 
 def _ingest_fred(ctx: _Run, sink: RawSink, settings: Settings, ledger: Ledger, want: set[str], latest: dict[str, date]) -> None:
@@ -150,7 +150,7 @@ def _ingest_fred(ctx: _Run, sink: RawSink, settings: Settings, ledger: Ledger, w
                       {"series_id": series_id, "start": str(start) if start else None}, r.status_code)
             return parse_fred_json(r.content, series, unit)
 
-        ctx.step(f"fred_{series}", fetch)
+        ctx.step(series, fetch)
 
 
 def _summary(store: Store) -> dict[str, dict[str, Any]]:

@@ -267,7 +267,7 @@ def test_fred_key_never_reaches_raw_ledger_or_errors(env, monkeypatch, caplog):
     monkeypatch.setattr(ingest_macro, "http_session", lambda: Boom({}))
     monkeypatch.setattr("jpscan.connectors.macro.time.sleep", lambda s: None)
     out = ingest_macro.run(settings, paths, ledger, store, series=["nikkei225"])
-    assert out["status"] == "partial" and "ConnectionError" in out["sources"]["fred_nikkei225"]
+    assert out["status"] == "partial" and "ConnectionError" in out["sources"]["nikkei225"]
     assert secret not in str(out) and secret not in caplog.text
 
     db_bytes = b"".join(p.read_bytes() for p in paths.db.iterdir() if p.is_file())
