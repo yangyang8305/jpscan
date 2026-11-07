@@ -1,0 +1,27 @@
+# 密钥
+.env
+.env.*
+
+# 本地数据（J-Quants、JPX 等条款禁止再分发，只存本地）
+data/
+*.parquet
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.json.gz
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# 其他
+*.log
+*.tmp

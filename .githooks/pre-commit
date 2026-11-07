@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# 公开仓库防护：阻止密钥、原始数据与个人路径进入版本库。
+# 启用：git config core.hooksPath .githooks
+set -u
+fail=0
+root="$(git rev-parse --show-toplevel)"
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+# 1. 禁止的路径与文件类型（J-Quants、JPX 等条款禁止再分发原始数据）
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    .env|.env.*|data/*|*/data/*)
+      echo "BLOCKED path: $f"; fail=1 ;;
+    *.parquet|*.duckdb|*.sqlite|*.json.gz|*.pdf|*.xlsx|*.xls)
+      echo "BLOCKED data file type: $f"; fail=1 ;;
+  esac
+done <<EOF
+$staged
+EOF
+
+# 2. 密钥值与个人路径（只查本次新增内容）
+added="$(git diff --cached --unified=0 --no-color -- . ':(exclude).githooks/pre-commit' | grep -E '^\+' | grep -vE '^\+\+\+')"
+if [ -f "$root/.env" ]; then
+  while IFS='=' read -r k v; do
+    v="$(printf '%s' "${v:-}" | tr -d '\r\n"')"
+    case "$k" in \#*|'') continue ;; esac
+    [ "${#v}" -lt 12 ] && continue
+    if printf '%s' "$added" | grep -qF -- "$v"; then
+      echo "BLOCKED: staged content contains the value of $k from .env"; fail=1
+    fi
+  done < "$root/.env"
+fi
+if printf '%s' "$added" | grep -qE 'sk-ant-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}'; then
+  echo "BLOCKED: staged content looks like an API token"; fail=1
+fi
+if printf '%s' "$added" | grep -qE 'C:[\\/]+Users[\\/]+|AppData[\\/]+Local|yangyang830516'; then
+  echo "BLOCKED: staged content contains a personal path or address"; fail=1
+fi
+
+[ "$fail" -eq 0 ] || { echo "Commit rejected by .githooks/pre-commit"; exit 1; }
+exit 0
