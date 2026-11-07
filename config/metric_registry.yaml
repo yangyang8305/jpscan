@@ -2227,3 +2227,87 @@ market_overrides:
       shareholder_yield: {inactive: true, note: "预告零分红 58%"}
     traps_zh: "PBR<1 只占 7%，27% 无预想，核心池只有 161 只。估值逻辑走不通时不要硬套。"
 
+# ---------- 数据来源与解锁 ----------
+# priority：1 最先。费用和条款见规划文档 3.2、19.1 节。
+data_sources:
+  - id: tdnet_daily
+    name_zh: "TDnet 每日采集"
+    priority: 1
+    cost: "免费"
+    state: "作业代码已有（jobs/ingest_tdnet.py），读取时 staging.disclosures 还没有数据"
+    worth_it: "最高，每拖一天就永久少一天：官方站只保留约 31 日"
+    unlocks: [evt_buyback, rev_cause_class, gate_dilution, gate_regulatory_red_flags, news_handcrafted_score, evt_tob_mbo_watch]
+    limits: "不能用于历史回测；公开披露信息，低频采集；价格仍受 Free 延迟限制。"
+  - id: edinet_key
+    name_zh: "EDINET API Key"
+    priority: 1
+    cost: "免费，需本人注册 Key"
+    state: "连接器正在开发；需要用户把 EDINET_API_KEY 写入 .env"
+    worth_it: "最高：不花钱补上负债、利息、持股结构这个最大缺口"
+    unlocks: [gate_zombie, gate_debt_coverage, gate_peak_earnings, gate_tangible_book, val_ev_ebitda, val_net_cash, val_hidden_asset_rnav, val_investment_securities, qual_gross_profit, qual_roic, own_foreign_individual, own_activist, own_parent_sub, own_cross_holding, text_mdna_tone]
+    limits: "年度和半期为主，3 月决算一般 6 月才有；解析成本和字段覆盖率未实测；单线程按日回填，注明出典。"
+  - id: backfill_free
+    name_zh: "完成 Free 回填"
+    priority: 1
+    cost: "免费，正在进行"
+    state: "进行中"
+    worth_it: "必须"
+    unlocks: [qual_fscore7, qual_op_profitability, val_ocf_yield, yield_net_payout, guid_forecast_innovation, evt_net_share_reduction, gate_miss_then_bullish, guid_remaining_growth]
+    limits: "只有 2 年、2 个财年；这 2 年是单边上涨市，不足以校准任何阈值。"
+  - id: jpx_files
+    name_zh: "JPX 免费文件"
+    priority: 2
+    cost: "免费"
+    state: "监理、改善、资本成本、退市、TOPIX 权重已入库；jpx_per_pbr_monthly 最新月只到 2024-08，需负责模块核查"
+    worth_it: "是，成本低"
+    unlocks: [evt_index_flow]
+    limits: "条款禁止再配信，只本地使用。周次信用 PDF 机器可读性差。"
+  - id: jquants_standard
+    name_zh: "J-Quants Standard"
+    priority: 3
+    cost: "¥3,300/月"
+    state: "未订阅"
+    worth_it: "决定拿真钱按这些信号判断时值得。Free 看不到最近 12 周，短期信号全部过期；10 年历史也是跨周期验证的唯一可行来源。比 Light 只多 ¥1,650，通常直接选它。"
+    unlocks: [val_self_pbr_pct, guid_bias, growth_hist_cagr, qual_margin_stability, rev_long_term, sd_margin, sd_short_interest]
+    limits: "个人私用，不得再配信；解約后须删除数据及可还原的派生物，要长期持有。信用和空売り没有足够日本证据，不是升级理由。"
+  - id: jquants_light
+    name_zh: "J-Quants Light"
+    priority: 4
+    cost: "¥1,650/月"
+    state: "未订阅"
+    worth_it: "只想去掉延迟、暂不做长期回测时可用。"
+    unlocks: [val_self_pbr_pct]
+    limits: "5 年，缺信用、空売り和 EDINET 系列。"
+  - id: jquants_tdnet_addon
+    name_zh: "J-Quants TDnet 附加包"
+    priority: 5
+    cost: "¥11,000/月（Light 以上）"
+    state: "未订阅"
+    worth_it: "暂不需要；事件回测确定要做时订阅 1-2 个月回填。"
+    unlocks: [evt_buyback, rev_no_news_loser, rev_cause_class]
+    limits: "同样受解约删除约束。"
+  - id: jquants_premium
+    name_zh: "J-Quants Premium"
+    priority: 6
+    cost: "¥16,500/月"
+    state: "未订阅"
+    worth_it: "不值得：年度明细 EDINET 免费可得，季度精度对高证据信号增量不大。"
+    unlocks: []
+    limits: "只有回测证明季度明细确有增量时才考虑。"
+  - id: external_benchmarks
+    name_zh: "French 日本因子、AQR QMJ、JKP"
+    priority: 2
+    cost: "免费"
+    state: "未接入评估"
+    worth_it: "是：判断本地结果是否只是在复现已知因子。JKP（CC BY-NC 4.0）可能是回答「近年哪些因子仍有效」的最快方法，尚未下载核对日本序列。"
+    unlocks: []
+    limits: "https://jkpfactors.com 能否按日本筛选未确认。"
+  - id: not_for_pipeline
+    name_zh: "四季報、IFIS、株探、Yahoo!ファイナンス 等"
+    priority: 9
+    cost: "不适用"
+    state: "只能人工查看"
+    worth_it: "条款禁止自动取得（文档 19.1）。一致预期是自动工具最大的盲区，只在最终候选上人工复核。"
+    unlocks: []
+    limits: "不要设计依赖这些来源的指标。KABU+（¥2,200/月）没有会社予想，增量低，不选。"
+
