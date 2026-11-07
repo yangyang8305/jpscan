@@ -88,7 +88,7 @@ metrics:
     plain_zh: "公司一年实际收到的经营现金相当于市值的百分之几。"
     purpose: undervaluation
     direction: higher_better
-    formula: "最近 FY 决算行 CFO（向前延续并记录其日期）/ (valuation_daily.MktCap * 1e6)。"
+    formula: "最近 FY 决算行 CFO（向前延续并记录其日期）/ (valuation_daily.MktCap * 1e6)；非 12 个月的期间按 CurFYEn−CurFYSt 天数折算到一年。"
     data_needed: "financial_statements.CFO, DocType, CurPerType；valuation_daily.MktCap"
     available_on_free_plan: true
     free_plan_note: "CFO 填写率 FY 100%、2Q 约 80-88%、1Q 约 15%、3Q 约 10%，只能按年度用。读取时只有 11.5% 的非金融公司有 FY 行（3 月决算的 5 月数据大多未回填），回填后应大幅上升，须重测。"
@@ -409,18 +409,18 @@ metrics:
     plain_zh: "过去一年公司通过分红和回购净还给股东多少钱，占市值的比例。"
     purpose: undervaluation
     direction: higher_better
-    formula: "(DivTotalAnn + 回购估算 − 增发估算)/(MktCap*1e6)；回购或增发估算 = −Δ(ShOutFY−TrShFY)*期间均价，Δ 须用 AdjFactor 还原分割。"
+    formula: "(DivTotalAnn + 回购估算 − 增发估算)/(MktCap*1e6)；回购或增发估算 = −Δ(ShOutFY−TrShFY)*期间均价，Δ 须用 AdjFactor 还原分割；非 12 个月的期间按天数折算。"
     data_needed: "financial_statements.DivTotalAnn, ShOutFY, TrShFY（2 个财年）；prices_daily.AdjFactor"
     available_on_free_plan: true
     free_plan_note: "FY 行 DivTotalAnn 73%、TrShFY 89%。读取时只有 6 家有 2 个 FY，须等回填；Free 全程只有 1 个变化点。"
     stale_on_free: false
     unlocks_with: "回填到 2025-05；更长历史需 J-Quants Light 以上"
     sector_rules: "金融业可算，但回购常受规制资本约束，读法不同。"
-    status: score
+    status: display
     planned_status: score
-    evidence_strength: moderate
+    evidence_strength: weak
     evidence: "Walkshäusl 2016（国际样本，控制规模、BM、动量、投资、盈利后仍显著，已读摘要，未见日本单列）https://ideas.repec.org/a/pal/assmgt/v17y2016i1d10.1057_jam.2015.34.html ；G2-34：回购持续性低于股息。"
-    why: "比股息率多抓回购并扣减增发，契合 2023 年后的回购潮。估算粗，先与股息率并列检验；它与 evt_net_share_reduction 用同一份股数变化，后者只在 TDnet 缺失时替代回购公告。"
+    why: "比股息率多抓回购并扣减增发，契合 2023 年后的回购潮。但回购是自建估算，证据只读了摘要且日本未单列，覆盖还没到，相关性和命中数都没测过，所以先展示。若放进 OR，回填后命中率会在未经检验的情况下自动上升；转正后规则改为「有净回报时用净回报，否则用股息」，不用 OR。"
 
   # ---------- 经营质量 ----------
   - id: qual_fscore7
@@ -1940,15 +1940,14 @@ families:
   shareholder_yield:
     name_zh: "股东回报"
     question_zh: "公司实际还给股东多少现金？"
-    metrics: [yield_dividend, yield_net_payout]
-    planned_metrics: []
+    metrics: [yield_dividend]
+    planned_metrics: [yield_net_payout]
     absence_means: unknown
     threshold:
       min_known: 1
       min_hits: 1
       hit_rules:
         - {metric: yield_dividend, rule: peer_best_pct, value: 0.30, unless_gate: gate_div_cover}
-        - {metric: yield_net_payout, rule: peer_best_pct, value: 0.30}
     fail_rule: null
     measured:
       known_share: {Prime: 0.92, Standard: 0.91, Growth: 0.93}
