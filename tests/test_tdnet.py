@@ -2,7 +2,9 @@
 import zipfile
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 import requests
 
@@ -10,8 +12,10 @@ from jpscan.connectors.base import RawSink
 from jpscan.connectors.tdnet import SOURCE, TdnetBlocked, TdnetClient, TdnetFormatError, assign_disclosure_ids, parse_list_page
 from jpscan.connectors.tdnet_xbrl import parse_summary
 from jpscan.events.classify import classify_title, dedupe_ja_en, detect_lang, download_policy, is_correction_title, load_taxonomy, normalize_title
+from jpscan.jobs import ingest_tdnet
 from jpscan.ledger import Ledger
 from jpscan.paths import DataPaths
+from jpscan.store import Store
 from jpscan.util.common import RateLimiter
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -397,3 +401,153 @@ def test_parse_summary_does_not_expand_external_entities(tmp_path):
            '<html xmlns:ix="http://www.xbrl.org/2008/inlineXBRL"><ix:nonFraction name="a" contextRef="c">&x;</ix:nonFraction></html>')
     facts = parse_summary(_zip(tmp_path, {"tse-rvfc-99910-ixbrl.htm": doc}))
     assert [f["value"] for f in facts] == [None]
+
+
+# ---------------- 作业 ----------------
+SYNTH_DAY = date(2026, 1, 5)
+
+
+def _settings(params=None):
+    return SimpleNamespace(root=ROOT, params=params or {}, params_version="test")
+
+
+@pytest.fixture
+def frozen_today(monkeypatch):
+    def freeze(d):
+        monkeypatch.setattr(ingest_tdnet, "today_jst", lambda: d)
+    return freeze
+
+
+def _job_env(tmp_path, responses):
+    client, session, paths, ledger = make_client(tmp_path, responses)
+    return client, session, paths, ledger, Store(paths)
+
+
+def _file_responses():
+    out = {"I_list_001_20260105.html": FIXTURE.read_bytes()}
+    for i in (7, 6, 5, 4, 3):
+        out[f"14012026010500000{i}.pdf"] = b"%PDF-1.7 synthetic"
+    for i in (7, 6, 5):
+        out[f"08122026010500000{i}.zip"] = b"PK\x03\x04 synthetic"
+    return out
+
+
+def test_run_writes_table_and_evidence_without_download(tmp_path, frozen_today):
+    frozen_today(date(2026, 1, 6))
+    client, session, paths, ledger, store = _job_env(tmp_path, _file_responses())
+    stats = ingest_tdnet.run(_settings(), paths, ledger, store, start=SYNTH_DAY, end=SYNTH_DAY, download=False, client=client)
+    assert session.calls == ["I_list_001_20260105.html"]              # 不下载文件
+    assert (stats["status"], stats["days_fetched"], stats["rows"], stats["en_deduped"]) == ("ok", 1, 6, 1)
+    assert stats["e40_share"] == round(1 / 6, 4)
+    assert stats["by_category"] == {"E01": 1, "E05": 1, "E36": 1, "E37": 1, "E38": 1, "E40": 1}
+
+    df = store.read("staging", "disclosures", partitions=["2026-01"])
+    assert sorted(df.columns) == sorted(ingest_tdnet.COLUMNS)
+    assert len(df) == 6
+    by_id = {r["disclosure_id"]: r for r in df.to_dict("records")}
+    up = by_id["140120260105000007"]
+    assert (up["disclosed_time"], up["disclosed_at"], up["Code"], up["code4"]) == ("18:30:00", "2026-01-05T18:30:00+09:00", "99910", "9991")
+    assert (up["category"], up["direction"], up["strength"], up["half_life_days"], up["lang"]) == ("E01", 1, 3, 20.0, "ja")
+    assert pd.isna(up["pdf_path"]) and up["is_correction"] == False  # noqa: E712
+    correction = by_id["140120260105000006"]
+    assert (correction["category"], correction["underlying"], correction["is_correction"]) == ("E38", "E37", True)
+    assert by_id["140120260105000003"]["is_correction"] == True  # noqa: E712  更新履历栏非空
+    assert "140120260105000004" not in by_id                     # 英文短信与日文同代码同时刻同类别，已去重
+    assert by_id["20260105_99950_1"]["category"] == "E05"        # 无 PDF 时的编号
+    assert by_id["20260105_99960_1"]["pdf_url"] is None          # 外部链接未采用
+
+    ev = ledger.get_evidence("EV-tdnet-140120260105000007")
+    assert (ev["source_type"], ev["doc_id"], ev["internal_id"], ev["snippet_lang"]) == ("tdnet", "140120260105000007", "99910", "ja")
+    assert ev["url"] == "https://www.release.tdnet.info/inbs/140120260105000007.pdf"
+    assert ev["disclosed_at"] == "2026-01-05T18:30:00+09:00"
+    assert ledger.status_of("tdnet_list", "2026-01-05") == "ok"
+
+
+def test_run_is_idempotent_and_skips_completed_days(tmp_path, frozen_today):
+    frozen_today(date(2026, 1, 6))
+    client, session, paths, ledger, store = _job_env(tmp_path, _file_responses())
+    ingest_tdnet.run(_settings(), paths, ledger, store, start=SYNTH_DAY, end=SYNTH_DAY, download=False, client=client)
+    calls = len(session.calls)
+    stats = ingest_tdnet.run(_settings(), paths, ledger, store, start=SYNTH_DAY, end=SYNTH_DAY, download=False, client=client)
+    assert len(session.calls) == calls
+    assert (stats["days_skipped"], stats["days_fetched"]) == (1, 0)
+    assert len(store.read("staging", "disclosures")) == 6
+
+
+def test_run_today_is_partial_and_refetched(tmp_path, frozen_today):
+    frozen_today(SYNTH_DAY)
+    client, session, paths, ledger, store = _job_env(tmp_path, _file_responses())
+    ingest_tdnet.run(_settings(), paths, ledger, store, start=SYNTH_DAY, end=SYNTH_DAY, download=False, client=client)
+    assert ledger.status_of("tdnet_list", "2026-01-05") == "partial"  # 当日未结束，不能算完整
+    ingest_tdnet.run(_settings(), paths, ledger, store, start=SYNTH_DAY, end=SYNTH_DAY, download=False, client=client)
+    assert session.calls.count("I_list_001_20260105.html") == 2
+    assert len(store.read("staging", "disclosures")) == 6
+
+
+def test_list_then_download_uses_stored_rows_and_policy(tmp_path, frozen_today):
+    frozen_today(date(2026, 1, 6))
+    client, session, paths, ledger, store = _job_env(tmp_path, _file_responses())
+    ingest_tdnet.run(_settings(), paths, ledger, store, start=SYNTH_DAY, end=SYNTH_DAY, download=False, client=client)
+    session.calls.clear()
+    stats = ingest_tdnet.run(_settings(), paths, ledger, store, start=SYNTH_DAY, end=SYNTH_DAY, download=True, client=client)
+    assert "I_list_001_20260105.html" not in session.calls            # 列表已完成，不重抓
+    assert "140120260105000003.pdf" not in session.calls              # E36 不在 PDF 白名单
+    assert sorted(session.calls) == ["081220260105000005.zip", "081220260105000006.zip", "081220260105000007.zip",
+                                     "140120260105000005.pdf", "140120260105000006.pdf", "140120260105000007.pdf"]
+    assert (stats["pdf_downloaded"], stats["xbrl_downloaded"], stats["file_failures"]) == (3, 3, 0)
+    df = store.read("staging", "disclosures")
+    assert len(df) == 6
+    row = df[df["disclosure_id"] == "140120260105000007"].iloc[0]
+    assert row["pdf_path"] == "raw/tdnet/pdf/2026-01/140120260105000007.pdf"
+    assert row["xbrl_path"] == "raw/tdnet/xbrl/2026-01/140120260105000007.zip"
+    assert (paths.root / row["xbrl_path"]).read_bytes().startswith(b"PK")
+    assert pd.isna(df[df["disclosure_id"] == "140120260105000003"].iloc[0]["pdf_path"])
+    assert ledger.status_of("tdnet_files", "2026-01-05") == "ok"
+    session.calls.clear()
+    ingest_tdnet.run(_settings(), paths, ledger, store, start=SYNTH_DAY, end=SYNTH_DAY, download=True, client=client)
+    assert session.calls == []
+
+
+def test_run_stops_on_block_and_records_failure(tmp_path, frozen_today):
+    frozen_today(date(2026, 1, 8))
+    responses = {"I_list_001_20260105.html": FIXTURE.read_bytes(), "I_list_001_20260106.html": FakeResponse(429)}
+    client, session, paths, ledger, store = _job_env(tmp_path, responses)
+    stats = ingest_tdnet.run(_settings(), paths, ledger, store, start=SYNTH_DAY, end=date(2026, 1, 8), download=False, client=client)
+    assert stats["status"] == "blocked"
+    assert "I_list_001_20260107.html" not in session.calls            # 被限制后不再继续请求
+    assert ledger.status_of("tdnet_list", "2026-01-05") == "ok"
+    assert ledger.status_of("tdnet_list", "2026-01-06") == "failed"
+
+
+def test_run_records_format_change_as_failure_and_continues(tmp_path, frozen_today):
+    frozen_today(date(2026, 1, 7))
+    responses = {"I_list_001_20260105.html": b"<html>maintenance</html>", "I_list_001_20260106.html": synthetic_page(date(2026, 1, 6), [("09:00", "99910", "資料", None)], 1)}
+    client, _, paths, ledger, store = _job_env(tmp_path, responses)
+    stats = ingest_tdnet.run(_settings(), paths, ledger, store, start=SYNTH_DAY, end=date(2026, 1, 6), download=False, client=client)
+    assert (stats["status"], stats["days_failed"], stats["days_fetched"]) == ("partial", 1, 1)
+    assert ledger.status_of("tdnet_list", "2026-01-05") == "failed"
+    assert ledger.status_of("tdnet_list", "2026-01-06") == "ok"
+
+
+def test_run_incomplete_day_not_marked_ok(tmp_path, frozen_today):
+    frozen_today(date(2026, 1, 6))
+    responses = {"I_list_001_20260105.html": synthetic_page(SYNTH_DAY, [("09:00", "99910", "資料", None)], 5)}
+    client, _, paths, ledger, store = _job_env(tmp_path, responses)
+    stats = ingest_tdnet.run(_settings(), paths, ledger, store, start=SYNTH_DAY, end=SYNTH_DAY, download=False, client=client)
+    assert stats["days_incomplete"] == ["2026-01-05"]
+    assert ledger.status_of("tdnet_list", "2026-01-05") == "partial"
+
+
+def test_window_default_and_clamp(frozen_today):
+    today = date(2026, 3, 10)
+    assert ingest_tdnet._window(None, None, today) == [date(2026, 3, 9), today]
+    days = ingest_tdnet._window(date(2025, 1, 1), None, today)
+    assert (days[0], days[-1], len(days)) == (date(2026, 2, 7), today, 32)
+    assert ingest_tdnet._window(date(2026, 3, 1), date(2026, 12, 31), today)[-1] == today
+
+
+def test_run_respects_disabled_param(tmp_path):
+    client, session, paths, ledger, store = _job_env(tmp_path, {})
+    settings = _settings({"data_sources": {"tdnet": {"enabled": False}}})
+    assert ingest_tdnet.run(settings, paths, ledger, store, client=client) == {"status": "disabled"}
+    assert session.calls == []
