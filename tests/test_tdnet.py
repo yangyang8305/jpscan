@@ -1,9 +1,16 @@
 """TDnet 连接器测试。全部使用合成数据：公司与数字均为虚构，真实下载内容不进入仓库。"""
+from datetime import date
 from pathlib import Path
 
 import pytest
+import requests
 
+from jpscan.connectors.base import RawSink
+from jpscan.connectors.tdnet import SOURCE, TdnetBlocked, TdnetClient, TdnetFormatError, assign_disclosure_ids, parse_list_page
 from jpscan.events.classify import classify_title, dedupe_ja_en, detect_lang, download_policy, is_correction_title, load_taxonomy, normalize_title
+from jpscan.ledger import Ledger
+from jpscan.paths import DataPaths
+from jpscan.util.common import RateLimiter
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -176,3 +183,137 @@ def test_dedupe_ja_en(tax):
     kept, dropped = dedupe_ja_en(rows, tax)
     assert [r["title"] for r in dropped] == [rows[1]["title"], rows[3]["title"]]
     assert len(kept) == 7
+
+
+# ---------------- 列表页 ----------------
+FIXTURE = ROOT / "tests" / "fixtures" / "tdnet" / "I_list_001_20260105.html"
+DAY = date(2026, 1, 5)
+
+
+class FakeResponse:
+    def __init__(self, status_code=200, content=b""):
+        self.status_code, self.content = status_code, content
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(str(self.status_code))
+
+
+class FakeSession:
+    """按 URL 文件名返回内容；未登记的 URL 返回 404。记录请求序列。"""
+
+    def __init__(self, responses=None):
+        self.responses = responses or {}
+        self.calls = []
+
+    def get(self, url, **kw):
+        name = url.rsplit("/", 1)[-1]
+        self.calls.append(name)
+        r = self.responses.get(name)
+        return FakeResponse(404) if r is None else r if isinstance(r, FakeResponse) else FakeResponse(200, r)
+
+
+def make_client(tmp_path, responses):
+    paths = DataPaths(tmp_path).ensure()
+    ledger = Ledger(paths.ledger_sqlite)
+    session = FakeSession(responses)
+    return TdnetClient(RawSink(paths, ledger, SOURCE), session=session, limiter=RateLimiter(10_000_000)), session, paths, ledger
+
+
+def synthetic_page(d, rows, total, page_date=None):
+    """rows: (time, code, title, pdf)。结构同真实页面。"""
+    trs = "".join(
+        f'<tr><td class="oddnew-L kjTime" noWrap>{t}</td><td class="oddnew-M kjCode" noWrap>{c}</td>'
+        f'<td class="oddnew-M kjName" noWrap>架空{c}</td><td class="oddnew-M kjTitle" align="left">'
+        + (f'<a href="{pdf}" target="_blank">{title}</a>' if pdf else title)
+        + '</td><td class="oddnew-M kjXbrl" noWrap align="center"> </td><td class="oddnew-M kjPlace" noWrap align="left">東</td>'
+        '<td class="oddnew-R kjHistroy" align="left">　</td></tr>'
+        for t, c, title, pdf in rows)
+    shown = page_date or d
+    return (f'<html><body><div id="kaiji-date-1">{shown.year}年{shown.month:02d}月{shown.day:02d}日</div>'
+            f'<div class="kaijiSum">全{total}件</div><table id="main-list-table">{trs}</table></body></html>').encode("utf-8")
+
+
+def test_parse_list_page_fixture():
+    parsed = parse_list_page(FIXTURE.read_bytes())
+    assert parsed["date"] == DAY
+    assert parsed["total"] == 7
+    rows = parsed["rows"]
+    assert len(rows) == 7
+    first = rows[0]
+    assert (first["time"], first["Code"], first["code4"], first["company"]) == ("18:30", "99910", "9991", "架空工業")
+    assert first["title"] == "通期業績予想の上方修正に関するお知らせ"
+    assert first["pdf_url"] == "https://www.release.tdnet.info/inbs/140120260105000007.pdf"
+    assert first["xbrl_url"] == "https://www.release.tdnet.info/inbs/081220260105000007.zip"
+    assert (first["exchanges"], first["correction_marker"]) == ("東", False)     # 全角空格不算更新履历
+    assert rows[1]["exchanges"] == "東名"
+    assert rows[3]["xbrl_url"] is None
+    assert (rows[4]["Code"], rows[4]["code4"], rows[4]["correction_marker"]) == ("999A0", "999A", True)   # 字母代码、更新履历
+    assert (rows[5]["Code"], rows[5]["code4"], rows[5]["pdf_url"]) == ("99950", "9995", None)             # 4 位补 0、无 PDF
+    assert rows[6]["pdf_url"] is None                                                                     # 外部链接不跟随
+
+
+def test_parse_list_page_rejects_other_pages():
+    with pytest.raises(TdnetFormatError):
+        parse_list_page("<html><body>maintenance</body></html>")
+    assert parse_list_page("<html><table id='main-list-table'></table></html>")["rows"] == []
+
+
+def test_disclosure_ids_stable_when_new_rows_arrive():
+    def rows(*codes):
+        return [{"Code": c, "pdf_name": None} for c in codes]
+    morning = rows("99910", "99910")
+    assign_disclosure_ids(morning, DAY)
+    evening = rows("99910", "99920", "99910", "99910")   # 新披露排在前面
+    assign_disclosure_ids(evening, DAY)
+    assert [r["disclosure_id"] for r in morning] == ["20260105_99910_2", "20260105_99910_1"]
+    assert [r["disclosure_id"] for r in evening[-2:]] == ["20260105_99910_2", "20260105_99910_1"]
+    with_pdf = [{"Code": "99910", "pdf_name": "140120260105000001.pdf"}]
+    assign_disclosure_ids(with_pdf, DAY)
+    assert with_pdf[0]["disclosure_id"] == "140120260105000001"
+
+
+def test_fetch_day_pages_until_declared_total_and_saves_raw(tmp_path):
+    p1 = synthetic_page(DAY, [("15:30", "99910", "株主総会資料", "140120260105000002.pdf")], 2)
+    p2 = synthetic_page(DAY, [("09:00", "99920", "株主総会資料", "140120260105000001.pdf")], 2)
+    client, session, paths, ledger = make_client(tmp_path, {"I_list_001_20260105.html": p1, "I_list_002_20260105.html": p2})
+    day = client.fetch_day(DAY)
+    assert session.calls == ["I_list_001_20260105.html", "I_list_002_20260105.html"]   # 达到总件数即停，不多请求 404
+    assert (len(day["rows"]), day["pages"], day["complete"]) == (2, 2, True)
+    assert [r["page"] for r in day["rows"]] == [1, 2]
+    raw = paths.raw_dir("tdnet", "list") / "2026"
+    assert (raw / "20260105_p001.html").read_bytes() == p1
+    assert (raw / "20260105_p002.html").exists()
+    with ledger.conn() as c:
+        assert c.execute("SELECT COUNT(*) FROM raw_files WHERE source='tdnet' AND dataset='list'").fetchone()[0] == 2
+
+
+def test_fetch_day_stops_at_404_and_flags_incomplete(tmp_path):
+    p1 = synthetic_page(DAY, [("15:30", "99910", "株主総会資料", "140120260105000002.pdf")], 3)
+    client, session, *_ = make_client(tmp_path, {"I_list_001_20260105.html": p1})
+    day = client.fetch_day(DAY)
+    assert session.calls == ["I_list_001_20260105.html", "I_list_002_20260105.html"]
+    assert (len(day["rows"]), day["complete"]) == (1, False)
+
+
+def test_fetch_day_empty_day_and_wrong_date_and_block(tmp_path):
+    client, _, *_ = make_client(tmp_path, {})
+    assert client.fetch_day(DAY) == {"rows": [], "total": None, "pages": 0, "complete": True}   # 休日：首页即 404
+    wrong = synthetic_page(DAY, [("15:30", "99910", "資料", None)], 1, page_date=date(2026, 1, 6))
+    client, _, *_ = make_client(tmp_path / "b", {"I_list_001_20260105.html": wrong})
+    with pytest.raises(TdnetFormatError):
+        client.fetch_day(DAY)
+    client, session, *_ = make_client(tmp_path / "c", {"I_list_001_20260105.html": FakeResponse(403)})
+    with pytest.raises(TdnetBlocked):
+        client.fetch_day(DAY)
+    assert len(session.calls) == 1
+
+
+def test_download_file_checks_content(tmp_path):
+    client, _, paths, _ = make_client(tmp_path, {"a.pdf": b"%PDF-1.7 synthetic", "bad.pdf": b"<html>error</html>"})
+    url = "https://www.release.tdnet.info/inbs/"
+    path = client.download_file(url + "a.pdf", "pdf", "a", ".pdf", b"%PDF", "2026-01")
+    assert path == paths.raw_dir("tdnet", "pdf") / "2026-01" / "a.pdf"
+    assert client.download_file(url + "bad.pdf", "pdf", "bad", ".pdf", b"%PDF", "2026-01") is None
+    assert client.download_file(url + "gone.pdf", "pdf", "gone", ".pdf", b"%PDF", "2026-01") is None
+    assert list((paths.quarantine / "tdnet" / "pdf").glob("bad_*.bin"))
