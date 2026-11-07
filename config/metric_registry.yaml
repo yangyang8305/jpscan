@@ -1,0 +1,374 @@
+# 指标注册表：本工具考虑过的每一个指标、它属于哪个证据家族、现在怎么用、为什么。
+# 说明文字见 docs/指标与数据评估.md；公式字段名与规划文档附录 B、staging 表一致。
+#
+# 三份独立评估（研究证据、从业者判断、实测数据可得性）的结论在此合并；有分歧的地方写在 why 或 evidence 里。
+# 本文件未经回测：evidence_strength 是外部证据的强度，不代表本工具已验证。所有阈值都是先验值，
+# 只能由指标评估工具的样本外结果修改，且须更新 version 与 changelog。
+#
+# 字段约定
+#   family:      所属家族。evidence 家族见 families；另有 risk_gates、execution、context 三个非证据分组。
+#   direction:   higher_better / lower_better / flag（是非标记）/ none（只作背景）。
+#   available_on_free_plan: 只用 J-Quants Free 字段与已入库的 JPX 免费文件能否计算（不看回填是否已完成，回填情况写在 free_plan_note）。
+#   stale_on_free: true 表示信号寿命短于 Free 的 12 周延迟：Free 上可用于研究，但不能用来判断当下。
+#   unlocks_with:  当前算不出或算不好时，靠什么解锁；null 表示不需要。
+#   status:        score（计入家族判断与排序）/ gate（只用于排除或降级）/ display（只展示，不影响结果）/ excluded（不计算或不使用）。
+#                  available_on_free_plan=false 且 status=display 表示现阶段卡片上显示「未检查」，不得当作通过。
+#   planned_status: 数据到位且通过指标评估工具检验后的状态；与 status 相同表示不打算改变。
+#   evidence_strength: strong / moderate / weak / none（none 含「未找到」，不等于「已证伪」）。
+#   evidence:      G-xx 指规划文档附录 G 的编号；其余给出 URL；括号注明阅读程度。
+# 单位陷阱（已实测）：valuation_daily.MktCap 与 prices_daily.MktCap 单位为百万円，financial_statements 金额为円；
+#   prices_daily.MktCap 含库存股，valuation_daily.MktCap 不含；FwdROE、ROE、EqAR 是小数不是百分比。
+version: "0.1.0"
+as_of: "2026-11-07"
+changelog:
+  - version: "0.1.0"
+    date: "2026-11-07"
+    note: "初版：合并三份独立评估与当日实测；未做收益回测，全部阈值为先验"
+
+measured_snapshot:
+  date: "2026-08-14"
+  universe: "ProdCat=011，Prime 1549、Standard 1559、Growth 596，共 3704；金融四业 169"
+  note: "读取时回填仍在进行，数字每天在变：financial_statements 为 2026-05-22 至 08-14（4449 行、3816 家，FY 决算行 480 行、456 家），valuation_daily 46 个交易日，prices_daily 90 个交易日。只测了字段覆盖、单日横截面相关和命中数，没有测未来收益。该日处于 1Q 决算季，上修事件占比偏高。"
+
+metrics:
+  # ---------- 相对估值 ----------
+  - id: val_pbr_roe_residual
+    family: relative_value
+    aliases: [N1, ROE_ADJ_PBR]
+    name_zh: "ROE 调整后 PBR 残差"
+    plain_zh: "在同行业、赚钱能力相近的公司里，这家公司的 PBR 比应有水平低多少。"
+    purpose: undervaluation
+    direction: lower_better
+    formula: "每日按市场 Mkt 分别回归 ln(PBR) = S33 行业固定效应 + b*ln(FwdROE)，样本限 PBR>0 且 FwdROE>0.005，FwdROE 上限 0.5；取残差，越负越便宜。FwdROE<=0.005 记为未命中，不当作便宜。"
+    data_needed: "valuation_daily.PBR, FwdROE；security_master.S33, Mkt"
+    available_on_free_plan: true
+    free_plan_note: "当日非金融覆盖 Prime 96%、Standard 95%、Growth 84%。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "金融业按各自行业单独回归，不与非金融合并。Growth 的解释力太低（R2 约 0.17），残差只展示、不计入家族。"
+    status: score
+    planned_status: score
+    evidence_strength: moderate
+    evidence: "这个公式在日本没有直接检验，属间接支持：G2-05、G2-06、G2-07；Chou-Ko-Rhee 2023（价值加营业盈利的特征模型解释力最好，已读摘要）https://pure.lib.cgu.edu.tw/en/publications/comparing-competing-factor-and-characteristics-models-evidence-in/ 。实测（2026-08-14 单日）：全市场混合的线性口径与原始 B/M 行业内秩相关 0.93，前 30% 名单 89% 重合，等于没有调整；按市场分别回归的对数口径相关降到 0.72、重合 67%，名单中 FwdROE<5% 的比例从原始 B/M 的 44% 降到 21%。b 值 Prime 0.69、Standard 0.44、Growth 0.45。"
+    why: "直接回答「便宜得有没有道理」，比 PBR<1 或硬阈值更连续。这是自己构造的公式，因此保留原始 B/M 作为它必须跑赢的对照。注意 E/P = FwdROE/PBR，所以残差在数学上是 B/M 与 E/P 的混合（实测与 E/P 相关 0.77），两者不算两份独立证据。"
+
+  - id: val_fwd_ep
+    family: relative_value
+    aliases: [N2, V2 的倒数]
+    name_zh: "预期盈利收益率 E/P"
+    plain_zh: "按公司自己的利润预测，每投入 100 元股价一年能赚多少。"
+    purpose: undervaluation
+    direction: higher_better
+    formula: "valuation_daily.FwdEPS / C。亏损预测得到负值，排在最后。FwdEPS 空表示未给预想，记为未知。"
+    data_needed: "valuation_daily.FwdEPS；prices_daily.C"
+    available_on_free_plan: true
+    free_plan_note: "当日覆盖 Prime 95%、Standard 93%、Growth 85%。valuation_daily.FwdEPS 约等于 FNP/(ShOutFY−TrShFY)（吻合 90%），与公司公布的 FEPS 只吻合 77%，两者不可混用。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "证券业预想大多缺失（FwdEPS 覆盖 27%），记未知，不扣分。不动产业低 PER 是常态，只在行业内比较。周期行业见 gate_peak_earnings。"
+    status: score
+    planned_status: score
+    evidence_strength: moderate
+    evidence: "G2-01 中 E/P 不如 B/M 和现金流收益率显著；G2-15（未核实）期初预想偏乐观；Kitagawa & Shuto（已读摘要）酌量性高估预想的公司随后持续负超额 https://www.carf.e.u-tokyo.ac.jp/old/pdf/workingpaper/fseries/F367.pdf 。实测：FwdPER 非空值中没有小于等于 0 的，直接用 PER 排序会悄悄丢掉预测亏损的公司；E/P 在 Growth 比 FwdPER 多覆盖约 10.7 个百分点。"
+    why: "日本市场以会社予想为锚，但数值有偏差。用 E/P 而不是 PER，亏损公司才能排在底部而不是消失。必须配合 gate_one_off，因为低 PER 名单里一次性利润明显更多。"
+
+  - id: val_ocf_yield
+    family: relative_value
+    aliases: [cash_flow_yield]
+    name_zh: "营业现金流收益率"
+    plain_zh: "公司一年实际收到的经营现金相当于市值的百分之几。"
+    purpose: undervaluation
+    direction: higher_better
+    formula: "最近 FY 决算行 CFO（向前延续并记录其日期）/ (valuation_daily.MktCap * 1e6)。"
+    data_needed: "financial_statements.CFO, DocType, CurPerType；valuation_daily.MktCap"
+    available_on_free_plan: true
+    free_plan_note: "CFO 填写率 FY 100%、2Q 约 80-88%、1Q 约 15%、3Q 约 10%，只能按年度用。读取时只有 11.5% 的非金融公司有 FY 行（3 月决算的 5 月数据大多未回填），回填后应大幅上升，须重测。"
+    stale_on_free: false
+    unlocks_with: "回填到 2025-05；无需付费"
+    sector_rules: "银行、保险、证券、其他金融不适用（银行 CFO 约 99% 为空）。不动产开发购地计入营业现金流（制度知识，未逐项核实），不计入家族。"
+    status: score
+    planned_status: score
+    evidence_strength: moderate
+    evidence: "G2-01、G2-02：与 B/M 并列最显著，但样本止于 1988 年，2010 年后日本单独验证未找到。实测与残差、E/P 的行业内秩相关只有 0.30、0.36（样本只有已回填 FY 的公司），是本家族里相对独立的一条腿。"
+    why: "能部分绕开会计利润问题，是 Free 数据就能算的第二个估值视角。证据偏老，需本地复核。"
+
+  - id: val_pbr
+    family: relative_value
+    aliases: [V1, B/M]
+    name_zh: "PBR（账面市值比 B/M）"
+    plain_zh: "股价相对公司净资产的倍数，越低代表市场给得越便宜。"
+    purpose: undervaluation
+    direction: lower_better
+    formula: "valuation_daily.PBR；B/M = 1/PBR；BPS<=0 无效并归入困境检查。不要用 Eq/股数 自算（只有 49% 与官方 BPS 吻合，ShEq/Eq<0.95 占 11-18%）。"
+    data_needed: "valuation_daily.PBR"
+    available_on_free_plan: true
+    free_plan_note: "当日覆盖 99.5%。C/BPS/PBR 比值 1%-99% 分位 0.99-1.01。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "跨行业不可比：PBR<1 占比纸 91%、石油 88%、电气燃气 85%，情报通信 9%。"
+    status: display
+    planned_status: display
+    evidence_strength: strong
+    evidence: "日本最稳健的横截面变量之一：G2-01、G2-02；Walkshäusl 2020 亚太回归 BM 斜率 0.386、t=6.0（2000-2018，日本未单列，已读全文）https://epub.uni-regensburg.de/44019 。已减弱：G2-04 日本 HML 2010-2025 约 2.8%/年、t≈1；MSCI 显示 2010s 差距很小；Ross 2025 指出部分溢价来自僵尸股。实测 lnPBR 对 FwdROE 的截面 R2：Prime 0.54（含行业 0.62）。"
+    why: "外部证据最多，但原始排序大半在选低 ROE 公司（前 30% 名单 44% 的 FwdROE<5%）。作为残差的输入和对照基准保留：若评估工具显示残差跑不赢原始 B/M，就应换回它。三份评估中研究证据一方主张打分，另两方主张只作输入，此处取后者并以对照检验收尾。"
+
+  - id: val_pbr_lt1_flag
+    family: relative_value
+    aliases: [PBR<1]
+    name_zh: "PBR<1 标记"
+    plain_zh: "只看股价是否低于净资产，把 0.99 倍和 1.01 倍当成两类公司。"
+    purpose: undervaluation
+    direction: flag
+    formula: "valuation_daily.PBR < 1"
+    data_needed: "valuation_daily.PBR"
+    available_on_free_plan: true
+    free_plan_note: "当日约 36% 的公司满足，几乎不算筛选。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "同 val_pbr，主要在标注行业。"
+    status: display
+    planned_status: display
+    evidence_strength: none
+    evidence: "G2-07：效应平滑，在 PBR=1 处没有跳跃；G2-06（海报，非同行评审）：PBR<1 且 PER>15 的子组跑输。实测 PBR<1 的 1158 家中 41% FwdROE<5%。"
+    why: "这是制度上的说法，不是定价上的断点。只作标签，不作门槛或加分。"
+
+  - id: val_fwd_per
+    family: relative_value
+    aliases: [V2]
+    name_zh: "予想 PER"
+    plain_zh: "股价是公司预计每股盈利的几倍。"
+    purpose: undervaluation
+    direction: lower_better
+    formula: "valuation_daily.FwdPER（FwdEPS<=0 时为空）"
+    data_needed: "valuation_daily.FwdPER"
+    available_on_free_plan: true
+    free_plan_note: "覆盖 Prime 94%、Standard 91%、Growth 74%，缺失不是随机的。分母接近零时极端值可达数万倍。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "同 val_fwd_ep。"
+    status: display
+    planned_status: display
+    evidence_strength: moderate
+    evidence: "同 val_fwd_ep。"
+    why: "人们习惯看这个数，所以展示；排序用它的倒数 val_fwd_ep，因为分母接近零会爆炸，亏损公司也会消失。"
+
+  - id: val_norm_per
+    family: relative_value
+    aliases: [NORM_PER]
+    name_zh: "经常化 PER"
+    plain_zh: "把卖资产、减损这类一次性影响去掉后，再看股价相当于几年的利润。"
+    purpose: undervaluation
+    direction: lower_better
+    formula: "C / [FOdP*(1-0.32) / (ShOutFY-TrShFY)]；0.32 为实测常态税负近似。IFRS 无 FOdP 时回退 FEPS 并标低置信。"
+    data_needed: "financial_statements.FOdP, ShOutFY, TrShFY；prices_daily.C"
+    available_on_free_plan: true
+    free_plan_note: "IFRS 286 家 FOdP 100% 为空。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "银行用 FOdP 可算；IFRS 公司不可比。"
+    status: display
+    planned_status: score
+    evidence_strength: moderate
+    evidence: "实测非金融 FNP/FOdP 中位 0.681、P90 0.867、P95 1.00；FwdPER<10 的 509 家中 20% 经常化后 PER>=10。这是防口径错误，未做收益检验。"
+    why: "思路正确，但 gate_one_off 用更少假设解决了主要问题，同时计入会与 val_fwd_ep 重复。留作对照，由评估工具决定是否替换 val_fwd_ep。"
+
+  - id: val_fwd_op_yield
+    family: relative_value
+    aliases: [N3]
+    name_zh: "预期营业利益收益率"
+    plain_zh: "公司预计的主业利润相对市值有多高，不受一次性损益和税率干扰。"
+    purpose: undervaluation
+    direction: higher_better
+    formula: "FOP（FY 行用 NxFOP）/ (valuation_daily.MktCap * 1e6)"
+    data_needed: "financial_statements.FOP, NxFOP；valuation_daily.MktCap"
+    available_on_free_plan: true
+    free_plan_note: "非金融有文档者覆盖 Prime 95%、Standard 96%、Growth 88%。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "银行 FOP 100% 为空，证券 81%、保险 56%，医药 27%、航空与电力燃气约 20%。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "无直接学术证据，只有 G2-01 的间接关联。"
+    why: "拿不到负债时是 EV/EBITDA 的实用替代，但证据弱且与 E/P 重复，先展示。"
+
+  - id: val_self_pbr_pct
+    family: relative_value
+    aliases: [V8, PBR_SELF_PCT]
+    name_zh: "PBR 相对自身历史分位"
+    plain_zh: "这家公司现在的估值比它自己过去几年是高还是低。"
+    purpose: undervaluation
+    direction: lower_better
+    formula: "当前 PBR 在过去 1250 个交易日 PBR 中的百分位；减损或大额增资后重置基期。"
+    data_needed: "valuation_daily.PBR 多年序列"
+    available_on_free_plan: false
+    free_plan_note: "Free 窗口约 487 个交易日，够不上文档要求的最少 500 日，且恰逢单边上涨市，会把多数股票判为偏贵。"
+    stale_on_free: false
+    unlocks_with: "J-Quants Light（5 年）或 Standard（10 年）"
+    sector_rules: "基本面恶化的股票也会落到低分位，须配合 guidance_change 与 business_quality。"
+    status: display
+    planned_status: score
+    evidence_strength: moderate
+    evidence: "G2-05（单篇，2008 年）：日本 PBR 效应主要来自相对自身历史的一时性偏离。"
+    why: "文档 4.2 把它列为入池必要条件，一篇论文加 2 年窗口撑不起硬门槛，改为展示。有 5 年以上历史且通过增量检验后再计入。"
+
+  - id: val_fcf_yield
+    family: relative_value
+    aliases: [V4]
+    name_zh: "自由现金流收益率"
+    plain_zh: "扣掉投资支出后的现金相对公司价值有多高。"
+    purpose: undervaluation
+    direction: higher_better
+    formula: "Free 近似：(CFO+CFI)/(MktCap*1e6)，用最近 FY。精确版：(CFO − 有形固定資産の取得)/EV，3 年平均。"
+    data_needed: "financial_statements.CFO, CFI；Capex 与 EV 需 EDINET 或 Premium"
+    available_on_free_plan: true
+    free_plan_note: "CFI 混有金融资产买卖和并购，噪音大；Free 窗口凑不出 3 年平均。"
+    stale_on_free: false
+    unlocks_with: "EDINET（Capex）；J-Quants Light 以上（3 年）"
+    sector_rules: "金融业不适用。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "未找到日本专门证据。G2-01 检验的是现金流收益率，不是 FCF/EV。"
+    why: "第一版的四大核心之一，依据其实是另一个指标。由 val_ocf_yield 替代，FCF 只展示。三份评估中数据一方主张打分，另两方主张展示。"
+
+  - id: val_ev_ebitda
+    family: relative_value
+    aliases: [V3]
+    name_zh: "EV/EBITDA"
+    plain_zh: "连同负债一起买下公司，需要几年的未扣折旧利润才能回本。"
+    purpose: undervaluation
+    direction: lower_better
+    formula: "(mcap + debt − cash) / (op_ttm + dep)，见附录 B 的 F11、F13、F16、F17。"
+    data_needed: "有利子負債、減価償却費：fins/summary 均无"
+    available_on_free_plan: false
+    free_plan_note: "Free 上算不出，mart 中覆盖 0%。"
+    stale_on_free: false
+    unlocks_with: "EDINET 財務諸表（免费，年度）或 J-Quants Premium"
+    sector_rules: "金融业不适用；2027-04 新租赁准则会造成断点。"
+    status: excluded
+    planned_status: display
+    evidence_strength: none
+    evidence: "文档 4.2 已承认日本缺乏学术证据，本次也未找到。"
+    why: "既无日本证据、当前也算不出。占核心位置只会让大量股票因缺值被低估分或被丢弃。接入 EDINET 后只对资本密集行业展示。"
+
+  - id: val_net_cash
+    family: relative_value
+    aliases: [V6]
+    name_zh: "净现金比率"
+    plain_zh: "公司现金减去所有借款后，相当于市值的几成。"
+    purpose: undervaluation
+    direction: higher_better
+    formula: "(CashEq + 短期有価証券 − debt) / mcap"
+    data_needed: "有利子負債、有価証券明细：需 EDINET 或 Premium"
+    available_on_free_plan: false
+    free_plan_note: "mart 中覆盖 0%。代理见 val_cash_minus_liabilities。"
+    stale_on_free: false
+    unlocks_with: "EDINET 財務諸表（免费）"
+    sector_rules: "金融业不适用。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "G2-09（二手，1975-88）。TOB、MBO 背景只是叙述性证据，2010 年后日本检验未找到。"
+    why: "作为生存能力和被收购背景的展示有用，但没有足够证据进评分。"
+
+  - id: val_cash_minus_liabilities
+    family: relative_value
+    aliases: [N5, NET_CASH_ALL_LIAB]
+    name_zh: "现金减全部负债比率"
+    plain_zh: "用现金减掉公司所有负债后相对市值的比例，比净现金苛刻，但现有数据就能算。"
+    purpose: undervaluation
+    direction: higher_better
+    formula: "(CashEq − (TA − Eq)) / (valuation_daily.MktCap * 1e6)，CashEq 向前延续并记录日期。"
+    data_needed: "financial_statements.CashEq, TA, Eq；valuation_daily.MktCap"
+    available_on_free_plan: true
+    free_plan_note: "CashEq 填写率 FY 100%、2Q 88%、1Q 17%、3Q 12%，半年才更新一次。"
+    stale_on_free: false
+    unlocks_with: "EDINET 或 TDnet 短信 XBRL 的 BS 明细（季度覆盖率未实测）"
+    sector_rules: "金融业无意义。负债含经营性应付，会低估制造业和贸易商。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "G2-09（旧、二手）。实测 n=1110：CashEq/市值>0.5 的 200 家中 62% 现金小于总负债；代理值>0 占 26%。清原达郎的净现金比率公式未查到原著确认。"
+    why: "只减有息负债或干脆不减，会把预收款、客户资金算成股东现金。从业者一方主张加上限后打分，另两方主张展示，此处先展示；没有回报行动时现金也不一定归股东。"
+
+  - id: val_hidden_asset_rnav
+    family: relative_value
+    aliases: [HIDDEN_ASSET_RNAV]
+    name_zh: "含み益调整净资产"
+    plain_zh: "公司持有的土地楼宇按市价算比账面多值多少。"
+    purpose: undervaluation
+    direction: higher_better
+    formula: "(ShEq + (賃貸等不動産時価 − 簿価)*(1−0.31)) / mcap"
+    data_needed: "有報 賃貸等不動産 注记"
+    available_on_free_plan: false
+    free_plan_note: "Free 无此字段。"
+    stale_on_free: false
+    unlocks_with: "EDINET 有報（免费，解析成本未实测）"
+    sector_rules: "只对不动产、铁路、仓库、百货类有意义。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "实务常用，未找到日本横截面收益证据。公允价值由公司估算，一年更新一次。"
+    why: "帮助读懂不动产类公司，不宜进全市场评分。"
+
+  - id: val_investment_securities
+    family: relative_value
+    aliases: [N14]
+    name_zh: "投资有价证券规模"
+    plain_zh: "公司持有别家公司股票的现值相当于市值多少。"
+    purpose: undervaluation
+    direction: none
+    formula: "投資有価証券 / mcap；不得同时计入净现金和净资产。"
+    data_needed: "EDINET 有報 BS"
+    available_on_free_plan: false
+    free_plan_note: "Free 无此字段。"
+    stale_on_free: false
+    unlocks_with: "EDINET 有報（免费）或 J-Quants Standard"
+    sector_rules: "金融业不适用。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "G 系列无专门预测证据，属改革背景下的假设。"
+    why: "接入 EDINET 后顺手提取，只作背景。"
+
+  - id: val_ep_jgb_spread
+    family: relative_value
+    aliases: [V7, DOC_V7_YIELD_SPREAD]
+    name_zh: "盈利收益率减国债利率"
+    plain_zh: "同一天所有股票减去的是同一个国债利率，所以它分辨不了个股优劣。"
+    purpose: undervaluation
+    direction: none
+    formula: "FwdEPS/C − JGB10Y"
+    data_needed: "valuation_daily；macro_series"
+    available_on_free_plan: true
+    free_plan_note: "能算但没有意义。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "无。"
+    status: excluded
+    planned_status: excluded
+    evidence_strength: none
+    evidence: "这是数学事实：同日减同一常数，个股排序与 E/P 完全相同。"
+    why: "从个股评分中删除。市场整体 E/P 减国债可留在市场环境模块展示。"
+
+  - id: val_fixed_labels
+    family: relative_value
+    aliases: [DOC_FIXED_VALUE_LABELS, value.strong]
+    name_zh: "强低估绝对线"
+    plain_zh: "不分行业地说 PER 低于 10、PBR 低于 1 就算很便宜。"
+    purpose: undervaluation
+    direction: flag
+    formula: "PBR<1、FwdPER<10、EV/EBITDA<5、FCF 收益率>8%、净现金>50% 等固定线（params.value.strong）"
+    data_needed: "valuation_daily"
+    available_on_free_plan: true
+    free_plan_note: "部分字段算不出。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "不动产 FwdPER<10 占 56%，证券 63%（n=8）；PBR<1 纸 91%、情报通信 9%。"
+    status: excluded
+    planned_status: excluded
+    evidence_strength: none
+    evidence: "实测见 sector_rules：这些标签主要在标注行业。"
+    why: "会误导不熟悉行业的使用者。一律改用行业内分位。"
+
