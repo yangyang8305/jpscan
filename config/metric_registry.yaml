@@ -37,7 +37,7 @@ changelog:
 measured_snapshot:
   date: "2026-08-14"
   universe: "ProdCat=011 且 MktNm 属 プライム、スタンダード、グロース 且 Code 第 5 位为 0：Prime 1549、Standard 1559、Growth 596，共 3704；金融四业 169。只写 ProdCat=011 是 3896 行，多出 TOKYO PRO MARKET 185 只和优先股 7 只（归在 プライム）。"
-  note: "读取时回填仍在进行，数字每天在变：financial_statements 为 2026-05-22 至 08-14（4449 行、3816 家，FY 决算行 480 行、456 家），valuation_daily 46 个交易日，prices_daily 90 个交易日。只测了字段覆盖、单日横截面相关和命中数，没有测未来收益。该日处于 1Q 决算季，上修事件占比偏高。"
+  note: "读取时回填仍在进行，数字每天在变（本次读取期间 financial_statements 从 9246 行增到 13384 行）：financial_statements 为 2025-12-29 至 08-14（3955 家，有 FY 行的公司 Prime 93%、Standard 88%、Growth 78%，有 2 个 FY 的只有 25 家），valuation_daily 2026-06-10 起 46 个交易日，prices_daily 2026-03-02 起 113 个交易日另加 2024-08、09 片段。只测了字段覆盖、单日横截面相关和命中数，没有测未来收益。该日处于 1Q 决算季，上修事件占比偏高。"
 
 metrics:
   # ---------- 相对估值 ----------
@@ -91,14 +91,14 @@ metrics:
     formula: "最近 FY 决算行 CFO（向前延续并记录其日期）/ (valuation_daily.MktCap * 1e6)；非 12 个月的期间按 CurFYEn−CurFYSt 天数折算到一年。"
     data_needed: "financial_statements.CFO, DocType, CurPerType；valuation_daily.MktCap"
     available_on_free_plan: true
-    free_plan_note: "CFO 填写率 FY 100%、2Q 约 80-88%、1Q 约 15%、3Q 约 10%，只能按年度用。读取时只有 11.5% 的非金融公司有 FY 行（3 月决算的 5 月数据大多未回填），回填后应大幅上升，须重测。"
+    free_plan_note: "CFO 填写率 FY 100%、2Q 约 80-88%、1Q 约 15%、3Q 约 10%，只能按年度用。适用行业中已知比例 Prime 93%、Standard 88%、Growth 77%，仍在回填。"
     stale_on_free: false
     unlocks_with: "回填到 2025-05；无需付费"
     sector_rules: "银行、保险、证券、其他金融不适用（银行 CFO 约 99% 为空）。不动产开发购地计入营业现金流（制度知识，未逐项核实），不计入家族。"
     status: score
     planned_status: score
     evidence_strength: moderate
-    evidence: "G2-01、G2-02：与 B/M 并列最显著，但样本止于 1988 年，2010 年后日本单独验证未找到。实测与残差、E/P 的行业内秩相关只有 0.30、0.36（样本只有已回填 FY 的公司），是本家族里相对独立的一条腿。"
+    evidence: "G2-01、G2-02：与 B/M 并列最显著，但样本止于 1988 年，2010 年后日本单独验证未找到。实测（核心池）与 B/M 的行业内秩相关 0.41，与 E/P 约 0.35，是本家族里相对独立的一条腿。"
     why: "能部分绕开会计利润问题，是 Free 数据就能算的第二个估值视角。证据偏老，需本地复核。"
 
   - id: val_pbr
@@ -119,7 +119,7 @@ metrics:
     planned_status: score
     evidence_strength: strong
     evidence: "日本最稳健的横截面变量之一：G2-01、G2-02；Walkshäusl 2020 亚太回归 BM 斜率 0.386、t=6.0（2000-2018，日本未单列，已读全文）https://epub.uni-regensburg.de/44019 。已减弱：G2-04 日本 HML 2010-2025 约 2.8%/年、t≈1；MSCI 显示 2010s 差距很小；Ross 2025 指出部分溢价来自僵尸股。实测 lnPBR 对 FwdROE 的截面 R2：Prime 0.54（含行业 0.62）；核心池行业内秩相关 B/M 与 E/P 0.45、与现金流收益率 0.41，残差与 E/P 0.85。"
-    why: "外部证据最多。单独排序会大半选到低 ROE 公司（前 30% 名单 44% 的 FwdROE<5%），放进 2-of-3 后不再如此：2026-08-14 核心池非金融非 Growth 1625 只，本规则命中 222 只，其中 FwdROE<5% 占 15.8%，基准 12.9%；旧规则（残差、E/P、现金流）命中 283 只，占 5.7%。这次转入是为修正重复计票，不是收益检验的结果；低 ROE 占比的取舍列在评估文档第 11 节。"
+    why: "外部证据最多。单独排序会大半选到低 ROE 公司（前 30% 名单 44% 的 FwdROE<5%），放进 2-of-3 后弱得多：2026-08-14 核心池非金融非 Growth 1625 只，本规则命中 243 只，其中 FwdROE<5% 占 16.9%，基准 12.9%；旧规则（残差、E/P、现金流）命中 294 只，占 6.5%。这次转入是为修正重复计票，不是收益检验的结果；低 ROE 占比的取舍列在评估文档第 11 节。"
 
   - id: val_pbr_lt1_flag
     family: relative_value
@@ -392,14 +392,14 @@ metrics:
     formula: "fc(FDivAnn) / C。0 表示不分红，算未命中；空表示未定，算未知，不得把空当 0。"
     data_needed: "financial_statements.FDivAnn, NxFDivAnn；prices_daily.C"
     available_on_free_plan: true
-    free_plan_note: "读取时已知 Prime 92%、Standard 91%、Growth 93%；预告零分红 Prime 2%、Standard 10%、Growth 58%。記念配当从字段看不出来，需 TDnet 文本。"
+    free_plan_note: "读取时已知 Prime 94%、Standard 91%、Growth 94%；预告零分红 Prime 2%、Standard 10%、Growth 58%。記念配当从字段看不出来，需 TDnet 文本。"
     stale_on_free: false
     unlocks_with: null
     sector_rules: "Growth 大多不分红，不参与此项。分割前后每股分红要按 AdjFactor 调整。"
     status: score
     planned_status: score
     evidence_strength: moderate
-    evidence: "MSCI 2026-08（1999-2026，大中盘指数，部分为回测）：日本高配当约 4%/年超额，2020s 仍在上位 https://www.msci.com/www/blog-posts/-/07090170150 ；G2-34（2005-2025）；G2-24。主要证据来自指数和卖方，不是严谨横截面检验。实测与 E/P 行业内秩相关 0.43，与估值家族命中名单的 Jaccard 0.25（核心池），算相对独立。"
+    evidence: "MSCI 2026-08（1999-2026，大中盘指数，部分为回测）：日本高配当约 4%/年超额，2020s 仍在上位 https://www.msci.com/www/blog-posts/-/07090170150 ；G2-34（2005-2025）；G2-24。主要证据来自指数和卖方，不是严谨横截面检验。实测（核心池）与 E/P 行业内秩相关 0.42，与估值家族命中名单的 Jaccard 0.17；估值命中者中 41% 进入股息前 30%，基准 25%，价格下跌会同时抬高两者。"
     why: "日本少有的长期稳定信号。必须配合 gate_div_cover：高股息前 10% 中 15% 派息率超过 100%。"
 
   - id: yield_net_payout
@@ -453,7 +453,7 @@ metrics:
     formula: "op_ttm（OP 期初累计差分，FY 行直接用 OP）/ 平均 TA；缺上年 TA 时用期末 TA 并标低置信。"
     data_needed: "financial_statements.OP, TA, CurPerType"
     available_on_free_plan: true
-    free_plan_note: "OP、TA 在决算文档都有，但 TTM 需要上年同期；读取时有 FY 行的只有 Prime 8%、Standard 13%、Growth 18%。"
+    free_plan_note: "OP、TA 在决算文档都有，但 TTM 需要上年同期。FY 行可算的比例 Prime 87%、Standard 87%、Growth 78%；OP 为空的非金融公司记未知。"
     stale_on_free: false
     unlocks_with: "回填到 2025-06；无需付费"
     sector_rules: "金融业不适用。OP 为空的公司（五大商社、三菱重工、日本ハム、コロワイド 等）记未知，不用 NP/TA 代替，因为不能和同业 OP/TA 比。"
@@ -634,7 +634,7 @@ metrics:
     formula: "仅 FY 决算行，按字段回退：JP 准则有 NxFOdP、OdP 时 NxFOdP − OdP（口径 odp）；否则有 NxFOP、OP 时 NxFOP − OP（口径 op）；否则 NxFNp − NP（口径 np）；都没有记未知。除以公告前一交易日 MktCap*1e6，再减同业（peer_group）中位得 adj；在同口径内排名，口径组不足 20 只不评。排名池是过去 250 个交易日的全部 FY 行，信号有效窗口是 DiscDate 后第 2 至第 60 个交易日。FY 行的 FOP 全空，要读 Nx 字段。"
     data_needed: "financial_statements.NxFOP, NxFOdP, NxFNp, OP, OdP, NP, gaap, DocType, CurPerType, DiscDate；valuation_daily.MktCap"
     available_on_free_plan: true
-    free_plan_note: "FY 决算行 NxFOP 88%。读取时有 FY 行的只有 Prime 8%、Standard 13%、Growth 18%（3 月决算的 5 月数据大多未回填）。"
+    free_plan_note: "FY 决算行 NxFOP 87%。有 FY 行的公司 Prime 93%、Standard 88%、Growth 78%，仍在回填。口径分布（2026-08-14）：odp 约 2290、op 约 183、np 约 31。"
     stale_on_free: true
     unlocks_with: "回测：回填到 2025-05。实盘：J-Quants Light 以上去掉延迟；TDnet 摘要 XBRL 可免费拿到近实时的预想数字，但价格仍延迟。"
     sector_rules: "银行走 odp 口径；保险、证券不适用（预想多缺失）。无 NxFOP 不只是五大商社，IFRS 公司约四分之一都没有（日本製鉄、三菱重工、豊田通商 等），所以按字段回退，不按行业写。"
@@ -1176,7 +1176,7 @@ metrics:
     formula: "C(t)/(C(t−21)*∏AdjFactor(t−20..t)) − 1，窗口跨除权日时加回估算分红（见文件头收益口径），再减同业（peer_group：S33，不足 20 只回退 S17）中位。不跳过最近 1 日。"
     data_needed: "prices_daily.C, AdjFactor；financial_statements.Div2Q, DivFY, FDiv2Q, FDivFY, CurPerEn；trading_calendar；security_master.S33, S17"
     available_on_free_plan: true
-    free_plan_note: "当日覆盖 99.8%。最差 10% 的分界约 −8.6%，命中 369 只，其中流动性核心池内 207 只。"
+    free_plan_note: "已知 Prime 100%、Standard 97%、Growth 99%。核心池内最差 10% 的分界约 −9.0%，命中 192 只。"
     stale_on_free: true
     unlocks_with: "实盘：J-Quants Light 以上去掉 12 周延迟"
     sector_rules: "无行业例外，但行业整体下跌不会触发，这是有意的。实质偏向高波动股：核心池按 60 日波动五分组，命中率 0%、2.6%、5.5%、10.4%、31.5%，所以 validation 要与波动标准化版本对照。"
@@ -1932,10 +1932,10 @@ families:
         - {metric: val_ocf_yield, rule: peer_best_pct, value: 0.30}
     fail_rule: null
     measured:
-      known_share: {Prime: 0.94, Standard: 0.90, Growth: 0.15}
-      hits_all: 679
-      hits_liquid_core: 317
-    independence_note: "三条腿的行业内秩相关（核心池）：B/M 与 E/P 0.45，B/M 与现金流 0.41，E/P 与现金流约 0.35。残差移出前它与 E/P 为 0.85（Prime 全体 0.91），旧规则 8 成命中同时靠残差和 E/P，现金流不是必要条件。2-of-3 仍是一份证据。"
+      known_share: {Prime: 1.00, Standard: 1.00, Growth: 0.99}
+      hits_all: 832
+      hits_liquid_core: 263
+    independence_note: "三条腿的行业内秩相关（核心池）：B/M 与 E/P 0.45，B/M 与现金流 0.41，E/P 与现金流约 0.35。残差移出前它与 E/P 为 0.85（Prime 全体 0.91），旧规则 77% 的命中同时靠残差和 E/P，现金流不是必要条件。2-of-3 仍是一份证据。"
     evidence_summary: "价值是日本证据最多的方向（moderate 到 strong），但 2010 年后单独回报明显变弱，所以不单独成篮：见 B1 的确认条件。"
 
   shareholder_yield:
@@ -1951,10 +1951,10 @@ families:
         - {metric: yield_dividend, rule: peer_best_pct, value: 0.30, unless_gate: gate_div_cover}
     fail_rule: null
     measured:
-      known_share: {Prime: 0.92, Standard: 0.91, Growth: 0.93}
-      hits_all: 989
-      hits_liquid_core: 566
-    independence_note: "与 E/P 秩相关 0.43，与残差 0.38；命中名单与 relative_value 的 Jaccard 0.25（核心池）。有重叠，但并非同一批公司。"
+      known_share: {Prime: 0.94, Standard: 0.91, Growth: 0.94, note: "Growth 已知但家族 inactive"}
+      hits_all: 743
+      hits_liquid_core: 435
+    independence_note: "与 E/P 秩相关 0.42；命中名单与 relative_value 的 Jaccard 0.17（核心池）。但估值命中者中 41% 进入股息前 30%（基准 25%），作为 B1 的确认，它的力度弱于字面。"
     evidence_summary: "moderate：长期稳定，主要证据来自指数和卖方。"
 
   business_quality:
@@ -1972,11 +1972,11 @@ families:
         - {metric: qual_op_profitability, rule: peer_best_pct, value: 0.30}
     fail_rule: "qual_fscore7 <= 2（至少 5 项可算）"
     measured:
-      known_share: {Prime: 0.08, Standard: 0.13, Growth: 0.18}
+      known_share: {Prime: 0.01, Standard: 0.01, Growth: 0.01, note: "按 coverage_metric：只有 25 家有 2 个 FY。OP/TA 可算 Prime 87%、Standard 87%、Growth 78%，不计入覆盖率"}
       hits_all: null
       hits_liquid_core: null
     independence_note: "OP/TA 与 B/M 秩相关 −0.30，与文献的价值、质量负相关一致，所以和估值搭配才有分散意义。"
-    evidence_summary: "moderate 且有冲突：指数层面质量单独很弱，特征回归显示与价值合用有增量。读取时大部分未知，现在不能作必要条件，回填到 2025-05 后自动生效。"
+    evidence_summary: "moderate 且有冲突：指数层面质量单独很弱，特征回归显示与价值合用有增量。F-Score 要 2 个 FY，现在不能作必要条件，回填到 2025-05 后自动生效。"
 
   guidance_change:
     name_zh: "指引变化"
@@ -1993,10 +1993,11 @@ families:
         - {metric: guid_revision_event, rule: event_up_top_pct, value: 0.30, window_days: 30, noise_floor: 0.01, noise_floor_basis: implied_fnp_change, min_abs: 0.005, min_events: 30, confirm: "主业预想同向且变动>=净利变动的一半；主业未知时标低置信"}
     fail_rule: "30 个交易日内 guid_revision_event 下调超过 noise_floor 且主业预想也下调（主业未知时算 fail 并标低置信），或 forecast_withdrawn。guid_forecast_innovation 的负值只展示，不算 fail：相对排名的最差 30% 分界只有约 −0.5% 市值，日本公司又常有保守指引，这条曾否决 2026-06-30 核心池 32% 的估值命中；指引走低本身已压低 E/P。"
     measured:
-      known_share: {Prime: 0.95, Standard: 0.94, Growth: 0.85}
-      hits_all: 236
-      hits_liquid_core: 100
-      fails_liquid_core: 80
+      known_share: {Prime: 0.95, Standard: 0.95, Growth: 0.87}
+      hits_all: 231
+      hits_liquid_core: 108
+      fails_liquid_core: 30
+      by_date_liquid_core: {"2026-06-30": {hits: 301, fails: 5}, "2026-07-31": {hits: 280, fails: 8}, "2026-08-14": {hits: 108, fails: 30}}
     independence_note: "隐含净利变动与估值、质量、股息的秩相关都不超过 0.23，与 1 个月跌幅 −0.27。"
     evidence_summary: "翌期指引 moderate（strong 只限低外资、高个人持股子样本），期中修正 moderate。窗口短于 Free 的 12 周延迟，Free 上只能研究。"
 
@@ -2014,9 +2015,10 @@ families:
         - {metric: evt_dividend_change, rule: any_up_event, window_days: 30}
     fail_rule: null
     measured:
-      known_share: {note: "配当修正可算；回购公告 0%（TDnet 尚未入库）；股数变化须回填到上年同期。未测全家族覆盖率。"}
-      hits_all: null
-      hits_liquid_core: null
+      known_share: {Prime: 1.00, Standard: 1.00, Growth: 1.00, note: "按近 100 日有财务文档计；回购公告 0%（TDnet 尚未入库）"}
+      hits_all: 223
+      hits_liquid_core: 177
+      by_date_liquid_core: {"2026-06-30": 26, "2026-07-31": 76, "2026-08-14": 177}
     independence_note: "TDnet 前只有配当修正一项。股数变化已在 F-Score、gate_dilution 里用过，不再计入。"
     evidence_summary: "回购规模样本大但窗口含公告前（moderate），且数据缺失；配当修正 moderate。只作可选确认，不作必要条件。"
 
@@ -2033,9 +2035,9 @@ families:
         - {metric: rev_1m, rule: core_best_pct, value: 0.10}
     fail_rule: null
     measured:
-      known_share: {Prime: 1.00, Standard: 1.00, Growth: 0.99}
-      hits_all: 369
-      hits_liquid_core: 207
+      known_share: {Prime: 1.00, Standard: 0.97, Growth: 0.99}
+      hits_all: null
+      hits_liquid_core: 192
     independence_note: "与所有估值、质量指标的行业内秩相关绝对值不超过 0.15。"
     evidence_summary: "moderate：存在性好，样本老，近期扣成本后是否还在未知。10% 取自文献的最低十分位，不是调出来的。"
 
@@ -2081,7 +2083,11 @@ buckets:
     excluded_markets: [Growth]    # 这是判断，不是覆盖率：回填后 Growth 的估值覆盖已过 0.60，不写明就会自动启动
     delay_sensitive: true
     why: "G2-06、G2-07 与 Chou-Ko-Rhee 2023 都指向价值要与盈利或指引合用；G2-17 显示低 PBR 上修后更强。"
-    measured_liquid_core: {total: 186, Prime: 164, Standard: 22, Growth: 0, note: "Growth 因覆盖不足暂停；只含 shareholder_yield 与 guidance_change 两个确认家族"}
+    measured_liquid_core:
+      "2026-06-30": {total: 139, Prime: 109, Standard: 30, Growth: 0}
+      "2026-07-31": {total: 140, Prime: 109, Standard: 31, Growth: 0}
+      "2026-08-14": {total: 106, Prime: 77, Standard: 29, Growth: 0}
+      note: "F-Score 未知，确认家族只算了 shareholder_yield、guidance_change、capital_action；估值命中者约 44% 得到确认"
   B2:
     name_zh: "指引改善"
     formerly: "质量成长"
@@ -2095,7 +2101,11 @@ buckets:
     excluded_sectors: [銀行業, 保険業, 証券･商品先物取引業, その他金融業]
     delay_sensitive: true
     why: "历史增长没有日本证据（growth_hist_cagr），成长由指引信号表达；文档 B2 的 CAGR 门槛和进捗率必要条件取消。金融业排除沿用 S06。"
-    measured_liquid_core: {total: 83, Prime: 51, Standard: 24, Growth: 8, note: "business_quality 覆盖不足，当前放行并标低置信"}
+    measured_liquid_core:
+      "2026-06-30": {total: 204, Prime: 154, Standard: 39, Growth: 11}
+      "2026-07-31": {total: 197, Prime: 149, Standard: 36, Growth: 12}
+      "2026-08-14": {total: 83, Prime: 51, Standard: 23, Growth: 9}
+      note: "business_quality 覆盖不足，当前放行并标低置信；3 月决算公司的 FY 行集中在 5 月，60 日窗口在 8 月大半过期，这个落差是季节性的"
   B3:
     name_zh: "错杀修复"
     goal_zh: "短期比同行跌得多，但业绩预期和分红没有同等恶化。"
@@ -2107,8 +2117,12 @@ buckets:
     gates: [hard, soft]
     excluded_sectors: [保険業, 証券･商品先物取引業]    # 指引家族 inactive、rev_intact_test 也跳过，进来等于没检查；银行保留
     delay_sensitive: true
-    why: "1 个月反转和无消息下跌有证据；原错杀分中的 R 和 F1 没有。TDnet 接入前归因项显示未归因，这个篮子的结论要打折。"
-    measured_liquid_core: {total: 186, Prime: 123, Standard: 37, Growth: 26, note: "rev_cause_class 未检查；只扣了 guidance_change 的 fail"}
+    why: "1 个月反转有证据，原错杀分中的 R 和 F1 没有。TDnet 接入前只能用代理拦决算下跌，其余显示未归因，这个篮子的结论要打折。"
+    measured_liquid_core:
+      "2026-06-30": {total: 168, Prime: 82, Standard: 44, Growth: 42, without_earnings_proxy: 180}
+      "2026-07-31": {total: 156, Prime: 104, Standard: 39, Growth: 13, without_earnings_proxy: 182}
+      "2026-08-14": {total: 92, Prime: 54, Standard: 21, Growth: 17, without_earnings_proxy: 181}
+      note: "扣了 guidance_change 的 fail、配当下调和业绩型代理；其余归因未检查，guid_remaining_growth、gate_distress 待回填"
   B0:
     name_zh: "特殊情形"
     goal_zh: "TOB、MBO、行动型股东、分拆等事件单独呈现，不评分。"
@@ -2117,7 +2131,7 @@ buckets:
     delay_sensitive: true
     why: "事件稀少，没有样本外预测模型。需要 TDnet 或 EDINET，当前数据下为空。"
 
-buckets_measured_note: "以上为 2026-08-14 单日、流动性核心池（1920 只）内、扣除可用硬门槛（106 只命中，其中核心池 33 只）后的命中数，未用 S17 回退，未扣 soft 门槛中尚不能算的项。重叠：B1 与 B2 35 只，B1 与 B3 8 只，B2 与 B3 6 只。该日处于决算季，事件型数字偏高。这只是规模检查，不是收益证据。"
+buckets_measured_note: "以上在流动性核心池（06-30 1911 只、07-31 1860 只、08-14 1920 只）内按本版规则用临时脚本实算，已扣可用硬门槛（核心池 14、20、24 只），用了 S17 回退。重叠 B1 与 B2：51、54、16 只；B1 与 B3：8、3、0 只；B2 与 B3：21、19、2 只。没算到的项：F-Score，降级类 soft 门槛（只算了 unless_gate 类），分红加回，firm_overrides，cyclical_codes，guid_remaining_growth，gate_miss_then_bullish；valuation_daily 从 06-10 开始，所以 06-30 的修正窗口不足 30 日。指引信号有强季节性，单日数字不能代表全年。这只是规模检查，不是收益证据。"
 
 # ---------- 行业覆盖 ----------
 # key 为 security_master.S33Nm 原文（注意半角中点 ･ 与全角中点 ・ 不同）。
