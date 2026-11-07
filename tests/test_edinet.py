@@ -14,9 +14,10 @@ import pandas as pd
 import pytest
 import requests
 
-from jpscan.connectors.edinet import (EdinetAuthError, EdinetClient, EdinetError, EdinetKeyMissing, EdinetNotFound,
+from jpscan.connectors.edinet import (CODE_LIST_URL, EdinetAuthError, EdinetClient, EdinetError, EdinetKeyMissing, EdinetNotFound,
                                       doc_kind, normalize_sec_code, parse_code_list)
 from jpscan.connectors.edinet_csv import decode_csv_bytes, extract_key_items, parse_csv_bytes, parse_financial_csv_zip, to_number
+from jpscan.jobs import ingest_edinet
 from jpscan.ledger import Ledger
 from jpscan.paths import DataPaths
 from jpscan.store import Store
@@ -516,9 +517,220 @@ def test_parse_code_list_bad_header_raises(tmp_path):
         parse_code_list(p)
 
 
+def test_run_code_list_is_idempotent_and_needs_no_key(env):
+    session = FakeSession(router=lambda url, params: FakeResponse(make_code_list_zip(), content_type="application/x-zip-compressed"))
+    client = make_client(env, session, key=None)
+    out = ingest_edinet.run_code_list(env.settings, env.paths, env.ledger, env.store, client=client)
+    assert out == {"rows": 3, "listed": 2, "with_code": 2, "as_of": date(2026, 11, 6)}
+    ingest_edinet.run_code_list(env.settings, env.paths, env.ledger, env.store, client=client)
+    df = env.store.read("staging", "edinet_codes")
+    assert len(df) == 3 and env.store.partitions("staging", "edinet_codes") == ["all"]
+    assert session.calls[0][0] == CODE_LIST_URL and "Subscription-Key" not in session.calls[0][1]
+    assert env.ledger.status_of("edinet_codes", "2026-11-06") == "ok"
+
+
 def test_code_list_http_error(env):
     client = make_client(env, FakeSession([FakeResponse(b"nope", status_code=403, content_type="text/html")]), key=None)
     with pytest.raises(EdinetError, match="403"):
         client.fetch_code_list()
 
 
+# ---------------- 作业 ----------------
+def router_for(lists: dict[str, list[dict]], zips: dict[str, bytes] | None = None, fail: dict[str, bytes] | None = None):
+    zips, fail = zips or {}, fail or {}
+
+    def route(url, params):
+        if url.endswith("documents.json"):
+            return FakeResponse(list_json(lists.get(params["date"], []), d=params["date"]))
+        doc_id = url.rsplit("/", 1)[-1]
+        if doc_id in fail:
+            return FakeResponse(fail[doc_id])
+        return FakeResponse(zips.get(doc_id, make_csv_zip()), content_type="application/octet-stream")
+    return route
+
+
+def run_job(env, session, start="2026-06-26", end="2026-06-26", **kw):
+    return ingest_edinet.run(env.settings, env.paths, env.ledger, env.store, start, end, client=make_client(env, session), **kw)
+
+
+def test_run_without_key_raises_clear_error(env):
+    with pytest.raises(EdinetKeyMissing, match="EDINET_API_KEY"):
+        ingest_edinet.run(env.settings, env.paths, env.ledger, env.store, "2026-06-26", "2026-06-26")
+
+
+def seed_codes(env):
+    session = FakeSession(router=lambda url, params: FakeResponse(make_code_list_zip(), content_type="application/x-zip-compressed"))
+    ingest_edinet.run_code_list(env.settings, env.paths, env.ledger, env.store, client=make_client(env, session, key=None))
+
+
+def test_run_end_to_end(env):
+    seed_codes(env)
+    rows = [
+        doc_row("S100TST1", 1),                                                             # 有報：下载并解析
+        doc_row("S100TST2", 2, dtype="180", form="053000", periodStart=None, periodEnd=None, csv_flag="0"),   # 臨報：无 CSV
+        doc_row("S100TST3", 3, dtype="220", form="170000", csv_flag="1"),                   # 回购：只留元数据，不下载
+        doc_row("S100TST4", 4, sec=None, edinetCode="E77777", filerName="架空投資ファンド", dtype="350", form="010000",
+                issuerEdinetCode="E99991", csv_flag="0"),                                   # 大量保有：提交者非上市，对象上市 → 保留
+        doc_row("S100TST5", 5, sec=None, edinetCode="E77777", dtype="350", form="010002",
+                issuerEdinetCode="E99992", csv_flag="0"),                                   # 对象非上市 → 丢弃
+        doc_row("S100TST6", 6, sec=None, edinetCode="E99992", dtype="120"),                 # 非上市提交者 → 丢弃
+    ]
+    session = FakeSession(router=router_for({"2026-06-26": rows}))
+    stats = run_job(env, session)
+    assert stats["days"] == 1 and stats["listed"] == 6 and stats["documents"] == 4
+    assert stats["downloaded"] == 1 and stats["parsed"] == 1 and stats["errors"] == 0
+
+    docs = env.store.read("staging", "edinet_documents").set_index("docID")
+    assert set(docs.index) == {"S100TST1", "S100TST2", "S100TST3", "S100TST4"}
+    assert env.store.partitions("staging", "edinet_documents") == ["2026-06"]
+    d1 = docs.loc["S100TST1"]
+    assert d1["Code"] == "99990" and d1["code4"] == "9999" and d1["doc_kind"] == "有価証券報告書"
+    assert d1["csv_flag"] and d1["path_csv"] == "raw/edinet/documents/2026-06/S100TST1_5.zip"
+    assert str(d1["submit_date"])[:10] == "2026-06-26" and str(d1["period_end_date"])[:10] == "2026-03-31"
+    d4 = docs.loc["S100TST4"]
+    assert d4["doc_kind"] == "大量保有報告書" and d4["target_code"] == "99980"
+    assert pd.isna(d4["Code"])
+    assert pd.isna(docs.loc["S100TST2"]["path_csv"])
+
+    details = env.store.read("staging", "financial_details_edinet")
+    assert set(details["docID"]) == {"S100TST1"} and set(details["Code"]) == {"99990"}
+    assert not details["element_id"].str.endswith("TextBlock").any()   # 文本块不进 staging
+    assert (details["element_id"] == "jppfs_cor:NetSales").sum() == 3
+
+    items = env.store.read("staging", "edinet_key_items")
+    assert set(items.columns) == {"Code", "period_end", "disc_date", "consolidated", "item", "value", "docID"}
+    cons = items[items["consolidated"]].set_index("item")["value"]
+    assert cons["interest_bearing_debt"] == 31000.0 and cons["net_sales"] == 1000000.0
+    assert env.ledger.status_of("edinet_csv", "S100TST1") == "ok"
+    assert env.ledger.status_of("edinet_list", "2026-06-26") == "ok"
+    # 只有一览和被选中的那份 CSV 发了带密钥的请求，且文件名、账本都没有密钥
+    assert sum("documents/" in u for u, _ in session.calls) == 1
+    assert_key_absent_everywhere(env)
+
+
+def test_run_is_idempotent_and_resumes_from_cache(env):
+    seed_codes(env)
+    session = FakeSession(router=router_for({"2026-06-26": [doc_row("S100TST1")]}))
+    run_job(env, session)
+    before = {t: len(env.store.read("staging", t)) for t in ("edinet_documents", "financial_details_edinet", "edinet_key_items")}
+    for t in before:   # 单行也要落到规范的月分区名
+        assert env.store.partitions("staging", t) == ["2026-06"]
+    session2 = FakeSession(router=router_for({}))
+    stats = run_job(env, session2)
+    assert session2.calls == []            # 已完成的一览走缓存，已下载的不再请求
+    assert stats["downloaded"] == 0 and stats["parsed"] == 0
+    assert {t: len(env.store.read("staging", t)) for t in before} == before
+    assert env.store.read("staging", "edinet_documents")["path_csv"].iloc[0].endswith("S100TST1_5.zip")
+    # resume=False：重新请求一览、重新解析本地 zip，结果仍不重复
+    session3 = FakeSession(router=router_for({"2026-06-26": [doc_row("S100TST1")]}))
+    stats = run_job(env, session3, resume=False)
+    assert len(session3.calls) == 1 and stats["parsed"] == 1
+    assert {t: len(env.store.read("staging", t)) for t in before} == before
+
+
+def test_run_today_list_not_marked_done(env, monkeypatch):
+    monkeypatch.setattr(ingest_edinet, "today_jst", lambda: date(2026, 6, 26))
+    session = FakeSession(router=router_for({"2026-06-26": []}))
+    run_job(env, session)
+    assert env.ledger.status_of("edinet_list", "2026-06-26") is None
+
+
+def test_run_tombstone_keeps_metadata_and_updates_status(env):
+    seed_codes(env)
+    run_job(env, FakeSession(router=router_for({"2026-06-26": [doc_row("S100TST1")]})))
+    session = FakeSession(router=router_for({"2026-06-26": [tombstone("S100TST1"), tombstone("S100NEVR", seq=2)]}))
+    stats = run_job(env, session, resume=False)
+    assert stats["errors"] == 0 and stats["downloaded"] == 0
+    docs = env.store.read("staging", "edinet_documents")
+    assert list(docs["docID"]) == ["S100TST1"]      # 没见过的 tombstone 不新增（listed_only）
+    row = docs.iloc[0]
+    assert row["withdrawal_status"] == "2" and row["legal_status"] == "0" and not row["csv_flag"]
+    assert row["Code"] == "99990" and row["filer_name"] == "架空商事株式会社" and str(row["period_end_date"])[:10] == "2026-03-31"
+    assert row["path_csv"].endswith("S100TST1_5.zip")
+
+
+def test_run_continues_on_download_errors_but_stops_on_auth(env):
+    seed_codes(env)
+    rows = [doc_row("S100GONE", 1), doc_row("S100TST1", 2)]
+    not_found = b'{"metadata":{"title":"t","status":"404","message":"Not Found"}}'
+    stats = run_job(env, FakeSession(router=router_for({"2026-06-26": rows}, fail={"S100GONE": not_found})))
+    assert stats["not_found"] == 1 and stats["downloaded"] == 1 and stats["parsed"] == 1
+    assert env.ledger.status_of("edinet_doc_type5", "S100GONE") == "not_found"
+
+    auth = b'{"StatusCode":401,"message":"Access denied due to invalid subscription key."}'
+    with pytest.raises(EdinetAuthError):
+        run_job(env, FakeSession(router=router_for({"2026-06-27": [doc_row("S100NEW1", submitDateTime="2026-06-27 09:00")]}, fail={"S100NEW1": auth})),
+                start="2026-06-27", end="2026-06-27")
+
+
+def test_run_bad_zip_marked_and_continues(env):
+    seed_codes(env)
+    rows = [doc_row("S100BADZ", 1), doc_row("S100TST1", 2)]
+    # 以 PK 开头但不是合法 zip：通过魔数检查，解析时失败
+    stats = run_job(env, FakeSession(router=router_for({"2026-06-26": rows}, zips={"S100BADZ": b"PK\x03\x04garbage"})))
+    assert stats["errors"] == 1 and stats["parsed"] == 1
+    assert env.ledger.status_of("edinet_csv", "S100BADZ") == "error"
+    assert set(env.store.read("staging", "financial_details_edinet")["docID"]) == {"S100TST1"}
+
+
+def test_run_list_error_marks_and_continues(env):
+    def route(url, params):
+        if params["date"] == "2026-06-26":
+            return FakeResponse(b'{"metadata":{"title":"t","status":"400","message":"Bad Request"}}')
+        return FakeResponse(list_json([], d=params["date"]))
+    stats = run_job(env, FakeSession(router=route), end="2026-06-27")
+    assert stats["errors"] == 1 and stats["days"] == 1
+    assert env.ledger.status_of("edinet_list", "2026-06-26") == "error"
+    assert env.ledger.status_of("edinet_list", "2026-06-27") == "ok"
+
+
+def test_run_download_types_and_doc_types(env):
+    seed_codes(env)
+    pdf = FakeResponse(b"%PDF-1.7 fake", content_type="application/pdf")
+    rows = [doc_row("S100TST1", 1), doc_row("S100TST2", 2, dtype="220")]
+
+    def route(url, params):
+        if url.endswith("documents.json"):
+            return FakeResponse(list_json(rows))
+        return pdf if params["type"] == 2 else FakeResponse(make_csv_zip(), content_type="application/octet-stream")
+    session = FakeSession(router=route)
+    stats = run_job(env, session, doc_types=["220"], download_types="2,5")
+    assert stats["downloaded"] == 2      # 只有 S100TST2 的 PDF 与 CSV
+    docs = env.store.read("staging", "edinet_documents").set_index("docID")
+    assert docs.loc["S100TST2"]["path_pdf"].endswith("S100TST2_2.pdf")
+    assert pd.isna(docs.loc["S100TST1"]["path_pdf"])
+    assert ingest_edinet.parse_download_types("1,5") == [1, 5]
+    assert ingest_edinet.parse_download_types([5, 2]) == [2, 5]
+    with pytest.raises(ValueError):
+        ingest_edinet.parse_download_types("9")
+
+
+def test_all_null_period_month_keeps_dates_across_partitions(env):
+    """某月全是无会计期间的书类时，不能把其他月份的日期带成字符串。"""
+    no_period = doc_row("S100TST2", 1, dtype="180", periodStart=None, periodEnd=None, submitDateTime="2026-05-11 09:00", csv_flag="1")
+    lists = {"2026-05-11": [no_period], "2026-06-26": [doc_row("S100TST1", 1)]}
+    session = FakeSession(router=router_for(lists, zips={"S100TST2": make_csv_zip(FIN_ROWS[:1])}))
+    run_job(env, session, start="2026-05-11", end="2026-05-11")
+    run_job(env, session)
+    assert env.store.partitions("staging", "edinet_documents") == ["2026-05", "2026-06"]
+    for table in ("edinet_documents", "financial_details_edinet"):
+        df = env.store.read("staging", table)
+        assert pd.api.types.is_datetime64_any_dtype(df["period_end_date"]), table
+        assert pd.api.types.is_datetime64_any_dtype(df["submit_date"]), table
+    items = env.store.read("staging", "edinet_key_items")
+    assert set(items["docID"]) == {"S100TST1"}          # 没有会计期间的书类不出关键科目
+    assert pd.api.types.is_datetime64_any_dtype(items["period_end"])
+
+
+def test_run_listed_only_false_keeps_all(env):
+    seed_codes(env)
+    rows = [doc_row("S100TST6", 1, sec=None, edinetCode="E77777", dtype="240", csv_flag="0")]
+    stats = run_job(env, FakeSession(router=router_for({"2026-06-26": rows})), listed_only=False)
+    assert stats["documents"] == 1
+
+
+def test_run_no_code_table_keeps_large_holding_with_issuer(env):
+    rows = [doc_row("S100TST4", 1, sec=None, dtype="350", form="010000", issuerEdinetCode="E99991", csv_flag="0"),
+            doc_row("S100TST6", 2, sec=None, dtype="120", csv_flag="0")]
+    run_job(env, FakeSession(router=router_for({"2026-06-26": rows})))
+    assert list(env.store.read("staging", "edinet_documents")["docID"]) == ["S100TST4"]
