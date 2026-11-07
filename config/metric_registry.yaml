@@ -2311,3 +2311,20 @@ data_sources:
     unlocks: []
     limits: "不要设计依赖这些来源的指标。KABU+（¥2,200/月）没有会社予想，增量低，不选。"
 
+# ---------- 验证 ----------
+# 本表的选择是待检验的判断。下列规则由指标评估工具执行，结果写回本文件时升 version。
+validation:
+  tool: "指标评估工具（规划文档第 7 章流程）"
+  tests:
+    - "每个 score 和 display 指标：同业内 IC 与十分位收益（5、21、60、120 个交易日），扣保守成本。"
+    - "增量：val_pbr_roe_residual 对 val_pbr；val_fwd_ep 对 val_norm_per；qual_fscore7 对 val_pbr；mom_idio、rev_long_term 对 val_pbr；guid_q_sue、guid_earnings_reaction 对 guid_forecast_innovation。"
+    - "家族独立性：家族间命中名单重合与秩相关；相关超过 0.6 的两个家族合并。"
+    - "门槛：被排除和未被排除的股票后续收益差；没有差别的门槛取消。"
+    - "基准：French 日本因子，判断是否只是在复现已知因子。"
+  promotion_rule: "display 转 score 须满足：目标数据到位，至少 3 个不重叠子期方向一致，样本外扣成本后为正，且相对同家族已有指标有增量。"
+  demotion_rule: "score 转 display 须满足：样本外连续两次评估方向相反或扣成本后为零。"
+  warnings:
+    - "2 年 Free 数据只能测字段质量和方向，是单边上涨市，不要据此调参；跨周期结论要 10 年数据。"
+    - "权重先等权，文献里的显著性不能换算成权重。"
+    - "Free 回测含幸存者问题，须与 jpx_delisted 核对。"
+    - "2020s 的日本证据几乎都来自指数或卖方；东证 2023 改革后的结构变化基本未被严谨研究覆盖。"
