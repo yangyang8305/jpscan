@@ -16,7 +16,7 @@ from .scoring import run_scoring
 log = logging.getLogger("jpscan.screener")
 
 OUTPUT_COLS = [
-    "Code", "Date", "CoName", "Mkt", "MktNm", "S33", "S33Nm", "S17Nm", "ScaleCat", "C", "mcap", "adv20_turnover", "in_core",
+    "Code", "Date", "CoName", "Mkt", "MktNm", "S33", "S33Nm", "S17", "S17Nm", "ScaleCat", "C", "mcap", "adv20_turnover", "in_core",
     # 证据
     "family_pass_count", "family_status", "family_coverage", "bucket_check", "reasons", "counter_reasons", "unknowns", "selection_summary_zh", "exclusion_reason_zh",
     "family_relative_value", "family_shareholder_yield", "family_business_quality", "family_guidance_change", "family_capital_action", "family_price_dislocation",

@@ -442,6 +442,9 @@ def attach_reasons(df: pd.DataFrame, params: dict, reg: dict | None = None) -> p
         if not in_any[i]:
             continue
         r = build_reasons(row, params, reg)
+        min_fam = int(pget(params, "evidence.min_families", 3))
+        if len(r["families_passed"]) < min_fam:
+            raise ValueError(f"{row.get('Code')} 入池但理由只覆盖 {len(r['families_passed'])} 个家族，少于 {min_fam}：入池规则和理由不一致")
         reasons[i] = json.dumps(r["reasons"], ensure_ascii=False, default=str)
         counters[i] = json.dumps(r["counter_reasons"], ensure_ascii=False, default=str)
         unknowns[i] = json.dumps(r["unknowns"], ensure_ascii=False, default=str)
