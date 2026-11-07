@@ -426,10 +426,10 @@ metrics:
     plain_zh: "用 7 个是非题给公司财务状况的变化打分：赚钱吗？现金流为正吗？在改善吗？有没有增发？"
     purpose: quality_risk
     direction: higher_better
-    formula: "7 项相加（用最近两个 FY）：NP/TA>0；CFO>0；Δ(NP/TA)>0；CFO>NP；Δ(ShEq/TA)>0；还原分割后 ShOutFY−TrShFY 未增加；Δ(Sales/TA)>0。至少 5 项可算才有效，按 分数/可算项数*7 折算。原版的流动比率与毛利率两项 Free 无法计算。"
+    formula: "7 项相加（用最近两个 FY）：NP/TA>0；CFO>0；Δ(NP/TA)>0；CFO>NP；Δ(ShEq/TA)>0；还原分割后 ShOutFY−TrShFY 增加不超过 0.5%（容差防止股票期权扣分）；Δ(Sales/TA)>0。TrShFY 全部为空的公司按 0，空与非空混用的公司股数项记未知。至少 5 项可算才有效，按 分数/可算项数*7 折算。原版的流动比率与毛利率两项 Free 无法计算。"
     data_needed: "financial_statements.NP, CFO, TA, ShEq, Sales, ShOutFY, TrShFY（2 个 FY）；prices_daily.AdjFactor"
     available_on_free_plan: true
-    free_plan_note: "公式可算，但读取时有 2 个 FY 的公司不足 1%，须等回填到 2025-05 后重测。TrShFY 空白很可能表示 0（未确认）。"
+    free_plan_note: "公式可算，但读取时有 2 个 FY 的公司极少，须等回填到 2025-05 后重测。已可测的水平项通过率（非金融有 FY 行者）：NP>0 90%、CFO>0 87%、CFO>NP 71%，63% 三项全过，再过 2 个差分项就到 5 分。TrShFY 空白很可能表示 0（未确认）。"
     stale_on_free: false
     unlocks_with: "回填到 2025-05；无需付费"
     sector_rules: "银行、保险、证券、其他金融不适用（CFO、Sales 缺失或无意义）。不动产的 CFO 两项读法不同。决算期变更 fy_months≠12 须折算。"
@@ -446,7 +446,7 @@ metrics:
     plain_zh: "公司用全部资产每年能赚出多少本业利润，不受杠杆影响。"
     purpose: quality_risk
     direction: higher_better
-    formula: "op_ttm（OP 期初累计差分，FY 行直接用 OP）/ 平均 TA"
+    formula: "op_ttm（OP 期初累计差分，FY 行直接用 OP）/ 平均 TA；缺上年 TA 时用期末 TA 并标低置信。"
     data_needed: "financial_statements.OP, TA, CurPerType"
     available_on_free_plan: true
     free_plan_note: "OP、TA 在决算文档都有，但 TTM 需要上年同期；读取时有 FY 行的只有 Prime 8%、Standard 13%、Growth 18%。"
@@ -1907,6 +1907,7 @@ metrics:
 family_policy:
   coverage_floor: 0.60          # 沿用 params.peer_group.min_metric_coverage_for_confidence；按市场分别计算
   ranking: "同一篮子内，按该股命中家族的指标同业分位等权平均排序；不按文献数字或样本内结果拟合权重。"
+  coverage_metric: "设了 coverage_metric 的家族，覆盖率只按这个指标计算；该指标未知的公司整个家族记 unknown。否则 OP/TA 单独可算时，B2 的必要条件会提前生效，松紧随回填进度摆动。"
   note: "覆盖率低于 coverage_floor 的家族不能作必要条件，处理方式见 bucket_policy。每次运行重新计算覆盖率，回填或接入新数据后自动生效，无需改表。"
 
 families:
@@ -1957,12 +1958,13 @@ families:
     question_zh: "生意本身赚不赚钱、有没有在变好？"
     metrics: [qual_fscore7, qual_op_profitability]
     planned_metrics: []
+    coverage_metric: qual_fscore7
     absence_means: unknown
     threshold:
       min_known: 1
       min_hits: 1
       hit_rules:
-        - {metric: qual_fscore7, rule: min_value, value: 5}
+        - {metric: qual_fscore7, rule: min_value, value: 6}
         - {metric: qual_op_profitability, rule: peer_best_pct, value: 0.30}
     fail_rule: "qual_fscore7 <= 2（至少 5 项可算）"
     measured:
@@ -2325,6 +2327,7 @@ validation:
     - "家族独立性：家族间命中名单重合与秩相关；相关超过 0.6 的两个家族合并。"
     - "门槛：被排除和未被排除的股票后续收益差；没有差别的门槛取消。"
     - "基准：French 日本因子，判断是否只是在复现已知因子。"
+    - "F-Score 回填验收：有 2 个 FY 后实测 qual_fscore7>=6 的通过率，须在 25-45%，超出就调 min_value 并升版本；同时复核 fail 线 F<=2 的触发率。这是分布取值，不是收益结果，changelog 要如实记录。"
   promotion_rule: "display 转 score 须满足：目标数据到位，至少 3 个不重叠子期方向一致，样本外扣成本后为正，且相对同家族已有指标有增量。"
   demotion_rule: "score 转 display 须满足：样本外连续两次评估方向相反或扣成本后为零。"
   warnings:
