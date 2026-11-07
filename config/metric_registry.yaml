@@ -1233,10 +1233,10 @@ metrics:
     plain_zh: "判断下跌是因为业绩、融资、丑闻、资金面，还是大盘一起跌。"
     purpose: mispricing_oversold
     direction: flag
-    formula: "事件日 −5 到 +1 匹配 disclosures 事件并分 T1-T6；增加优待废止、分红政策变更、TOB 失败三类；再与行业和 TOPIX 同期比较。T1 业绩型按 guid_earnings_reaction 为负时等待 21 个交易日，SUPF 为负时最长 60 日。"
+    formula: "事件日 −5 到 +1 匹配 disclosures 事件并分 T1-T6；增加优待废止、分红政策变更、TOB 失败三类；再与行业和 TOPIX 同期比较。T1 业绩型按 guid_earnings_reaction 为负时等待 21 个交易日，SUPF 为负时最长 60 日。Free 代理（TDnet 前也可算）：窗口内最大单日相对跌幅日距 DiscDate 为 −1 至 +3 个自然日且当日相对跌幅>=5% 时判「业绩型（代理）」，按 T1 等待；只用 DiscDate<=t 的文档，其余记未归因。"
     data_needed: "staging.disclosures；financial_statements；prices_daily；security_master.S33"
     available_on_free_plan: false
-    free_plan_note: "只用 J-Quants 无法完成（见 rev_no_news_loser）。TDnet 作业代码已有，但 staging.disclosures 尚无数据。"
+    free_plan_note: "只用 J-Quants 只能判出业绩型代理，其余要 TDnet（作业代码已有，staging.disclosures 尚无数据）。实测核心池 rev_1m 命中中符合代理的：2026-06-30 16 个、07-31 27 个、08-14 95 个（共 192 个命中），决算季才有明显影响。"
     stale_on_free: true
     unlocks_with: "TDnet 每日采集（免费）；历史需 J-Quants TDnet 附加包（¥11,000/月）"
     sector_rules: "无。"
@@ -1244,7 +1244,7 @@ metrics:
     planned_status: gate
     evidence_strength: moderate
     evidence: "G2-18、G2-19、G2-26、G2-27、G2-29、G2-31。无条件抄底优势有限。三个新增类别属实务判断，无专门证据。"
-    why: "错杀判断的核心步骤。TDnet 接入前结果为「未归因」，只显示，不算通过也不算不通过。"
+    why: "错杀判断的核心步骤。业绩型下跌文献提示可能继续下跌，现有字段就能粗判，不应等 TDnet。代理之外的结果为「未归因」，只显示，不算通过也不算不通过。5% 与日距都是先验。"
 
   - id: rev_intact_test
     family: price_dislocation
