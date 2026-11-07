@@ -647,17 +647,17 @@ metrics:
     plain_zh: "财年中公司上调或下调全年利润预测的方向和幅度。"
     purpose: catalyst_event
     direction: higher_better
-    formula: "implied_FNP = FwdEPS*(MktCap*1e6)/C；事件 = 非 FY 文档日前后的日变动绝对值>=1%；幅度 = Δimplied_FNP/(MktCap*1e6)，相对市值以防分母接近零。FY 决算当日 FwdEPS 切到下一财年，不算修正（实测占事件 24.5%），须用 financial_statements 的 CurPerType 剔除。有文档时用 DocType=EarnForecastRevision 的 FOP 变化核对。"
-    data_needed: "valuation_daily.FwdEPS, MktCap；prices_daily.C；financial_statements.DocType, CurPerType, DiscDate, FOP"
+    formula: "implied_FNP = FwdEPS*(MktCap*1e6)/C；事件 = 非 FY 文档日前后 implied_FNP 相对变动绝对值>=1%；幅度 = Δimplied_FNP/(事件前一交易日 MktCap*1e6)，相对市值以防分母接近零。FY 决算当日 FwdEPS 切到下一财年，不算修正（实测占事件 24.5%），须用 financial_statements 的 CurPerType 剔除。主业核对：文档有 FOdP（无则 FOP）时与上一文档 fc 值比较。上调要求主业同向且变动>=净利变动的一半，主业未知时算 hit 并标低置信。下调要求主业也下调才算 fail，主业未下调时标「净利单独变动」，主业未知时算 fail 并标低置信。另设事件 forecast_withdrawn：同一财年内上一份有 FOP 或 FNP、这一份全部撤回，计 fail；从未给预想的公司按 gate_guidance_absent 记未知，跨财年 FY 行不给预想只标记。"
+    data_needed: "valuation_daily.FwdEPS, MktCap；prices_daily.C；financial_statements.DocType, CurPerType, DiscDate, CurFYEn, FOP, FOdP, FNP"
     available_on_free_plan: true
-    free_plan_note: "基础序列覆盖 Prime 95%、Standard 94%、Growth 85%；45 天内有事件的公司 Prime 21%、Standard 15%、Growth 12%。只反映净利预想，不反映 OP 修正。日期不早于披露后 D+1（实测 98.7%）。"
+    free_plan_note: "基础序列覆盖 Prime 95%、Standard 94%、Growth 85%；45 天内有事件的公司 Prime 21%、Standard 15%、Growth 12%。隐含值只反映净利预想，主业核对要靠文档，修订文档 FOP 71% 有值。日期不早于披露后 D+1（实测 98.7%）。"
     stale_on_free: true
     unlocks_with: "实盘：TDnet 每日采集（E01、E02 事件近实时）；J-Quants Light 以上去掉延迟"
     sector_rules: "银行用 FOdP 与 FNP。证券不适用（预想缺失）。披露强制线为売上 ±10%、利益 ±30%，低于此线的变化可能不以修正事件出现。"
     status: score
     planned_status: score
     evidence_strength: moderate
-    evidence: "G2-17（单篇，2012）：修正后 30 营业日 CAR 同向，低 PBR 股上修后跑赢。G2-14、G2-18。实测（单季 1Q，未扣成本，短窗口）：FwdEPS 上调>=1% 的 n=186 公司 5 日超额中位 +0.77%、胜率 58.6%；未变 n=745 为 −0.22%、45.4%。分析师修正是另一回事：S&P 2018 等摘要称修正策略在日本不奏效（未读全文）。三份评估的强度判断不一（从 moderate 到 strong），因缺近期独立复现，取 moderate。"
+    evidence: "G2-17（单篇，2012）：修正后 30 营业日 CAR 同向，低 PBR 股上修后跑赢。G2-14、G2-18。实测 2026-08-14 前 30 日：上调 413 个，幅度 P10 0.24%、中位 1.0%、P70 2.05%；可核对的 391 个中 31 个主业未上调、19 个不足净利变动一半（一次性利润可以冒充上修，gate_one_off 也不覆盖这个信号）；下调可核对 67 个中 8 个主业未下调。非 FY 上调事件淡季很少，30 日窗口内的前 30% 在淡季只有几家，所以加绝对下限 0.5%（先验）。实测（单季 1Q，未扣成本，短窗口）：FwdEPS 上调>=1% 的 n=186 公司 5 日超额中位 +0.77%、胜率 58.6%；未变 n=745 为 −0.22%、45.4%。分析师修正是另一回事：S&P 2018 等摘要称修正策略在日本不奏效（未读全文）。三份评估的强度判断不一（从 moderate 到 strong），因缺近期独立复现，取 moderate。"
     why: "日本市场最重要的价格锚之一，Free 不必解析 XBRL 就能算（隐含值与文档 FNP 相差不足 1% 的占 91.8%）。只用 FwdEPS 差分会把回购当成上修，必须乘回股数。"
 
   - id: guid_surprise
@@ -1899,7 +1899,8 @@ metrics:
 #   group_best_pct   在 group 指定的分组内排在最好的前 value 比例；排名池 rank_pool_days 个交易日，window_days 只决定信号是否有效
 #   universe_best_pct 在全市场排在最好的前 value 比例
 #   min_value        指标值 >= value
-#   event_up_top_pct 窗口内上调事件中，幅度排在前 value 比例；变动小于 noise_floor 不算事件
+#   event_up_top_pct 窗口内上调事件中，幅度排在前 value 比例且幅度>=min_abs；窗口内上调事件少于 min_events 时只看 min_abs；
+#                    noise_floor 决定算不算事件，口径由 noise_floor_basis 写明（implied_fnp_change：相对隐含净利的变动）
 #   any_up_event     窗口内出现一次上调
 #   min_reduction    指标值 >= value，只作是否判断，不作连续排序
 # 阈值全部是先验：30% 沿用 params.value.core_metric_pct；不按任何收益结果调过。
@@ -1983,8 +1984,8 @@ families:
       min_hits: 1
       hit_rules:
         - {metric: guid_forecast_innovation, rule: group_best_pct, group: basis, value: 0.30, window_days: 60, rank_pool_days: 250, unless_gate: gate_miss_then_bullish}
-        - {metric: guid_revision_event, rule: event_up_top_pct, value: 0.30, window_days: 30, noise_floor: 0.01}
-    fail_rule: "30 个交易日内 guid_revision_event 下调超过 noise_floor。guid_forecast_innovation 的负值只展示，不算 fail：相对排名的最差 30% 分界只有约 −0.5% 市值，日本公司又常有保守指引，这条曾否决 2026-06-30 核心池 32% 的估值命中；指引走低本身已压低 E/P。"
+        - {metric: guid_revision_event, rule: event_up_top_pct, value: 0.30, window_days: 30, noise_floor: 0.01, noise_floor_basis: implied_fnp_change, min_abs: 0.005, min_events: 30, confirm: "主业预想同向且变动>=净利变动的一半；主业未知时标低置信"}
+    fail_rule: "30 个交易日内 guid_revision_event 下调超过 noise_floor 且主业预想也下调（主业未知时算 fail 并标低置信），或 forecast_withdrawn。guid_forecast_innovation 的负值只展示，不算 fail：相对排名的最差 30% 分界只有约 −0.5% 市值，日本公司又常有保守指引，这条曾否决 2026-06-30 核心池 32% 的估值命中；指引走低本身已压低 E/P。"
     measured:
       known_share: {Prime: 0.95, Standard: 0.94, Growth: 0.85}
       hits_all: 236
