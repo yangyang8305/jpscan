@@ -972,10 +972,10 @@ metrics:
     plain_zh: "公司上调还是下调了分红预告。"
     purpose: catalyst_event
     direction: higher_better
-    formula: "ΔFDivAnn/C（分割按 AdjFactor 调整）；DocType=DividendForecastRevision 或决算文档中 FDivAnn 变化；下调不算命中，由 rev_intact_test 读取。"
-    data_needed: "financial_statements.FDivAnn, DocType；prices_daily.C, AdjFactor"
+    formula: "按目标财年比较相邻文档的预想年度配当：1Q、2Q、3Q 行和修订文档取 FDivAnn（目标财年 CurFYEn），FY 行取 NxFDivAnn（目标财年 NxtFYEn）；文档类型不限。只比较目标财年相同的相邻值，分割按 AdjFactor 调整。上调不设幅度下限，0 转正也算上调；下调不算命中，由 rev_intact_test 读取。FY 行实绩与新财年指引的差不算事件，单独展示。"
+    data_needed: "financial_statements.FDivAnn, NxFDivAnn, DocType, CurFYEn, NxtFYEn；prices_daily.AdjFactor"
     available_on_free_plan: true
-    free_plan_note: "1 个月约 31-47 行 DividendForecastRevision。分红修订文档的利润类 F* 全空，不可覆盖状态。"
+    free_plan_note: "实测 2026-08-14 前全样本：上调 389、下调 52，上调中 87 个来自 EarnForecastRevision，0 转正 17 个，幅度中位 14%，不足 5% 的 13%。若拿 NxFDivAnn 和当年实绩比，41% 的年报公司都会算上调，这是假事件。分红修订文档的利润类 F* 全空，不可覆盖状态。"
     stale_on_free: true
     unlocks_with: "实盘：TDnet 每日采集；记念配当、DOE、累进政策需读文本"
     sector_rules: "无配当公司不适用。"
@@ -999,11 +999,11 @@ metrics:
     stale_on_free: false
     unlocks_with: "回填到 2025-06"
     sector_rules: "分割必须调整，否则会被误判。"
-    status: score
+    status: display
     planned_status: display
     evidence_strength: moderate
     evidence: "G2-22、G2-23、G2-34。连续排序证据矛盾：McLean 等 2009 跨 41 国显著（日本分表未核实）https://ideas.repec.org/a/eee/jfinec/v94y2009i1p1-17.html ，Blackburn & Cakici 2019 称日本不显著 https://www2.mdpi.com/1911-8074/12/2/90 。实测 27 个交易日内净股数降>1% 占 5.4%，升>1% 占 2.3%。"
-    why: "是回购公告的滞后代理，只在 TDnet 缺失时计入家族，并且只用是否减少超过 1% 的判断，不作连续排序。TDnet 到位后转为展示，以免与 yield_net_payout 重复计算。"
+    why: "回购公告的滞后代理。同一份股数变化已进入 F-Score、yield_net_payout、gate_dilution，再计入家族是重复计数；公式是 12 个月窗口，家族问的却是「最近」；5.4% 的实测是 27 日窗口，与规则不是同一口径；日本的连续排序证据也矛盾。所以只展示。"
 
   - id: evt_capital_cost_disclosure
     family: capital_action
@@ -1906,7 +1906,6 @@ metrics:
 #   event_up_top_pct 窗口内上调事件中，幅度排在前 value 比例且幅度>=min_abs；窗口内上调事件少于 min_events 时只看 min_abs；
 #                    noise_floor 决定算不算事件，口径由 noise_floor_basis 写明（implied_fnp_change：相对隐含净利的变动）
 #   any_up_event     窗口内出现一次上调
-#   min_reduction    指标值 >= value，只作是否判断，不作连续排序
 # 阈值全部是先验：30% 沿用 params.value.core_metric_pct；不按任何收益结果调过。
 family_policy:
   coverage_floor: 0.60          # 沿用 params.peer_group.min_metric_coverage_for_confidence；按市场分别计算
@@ -2002,21 +2001,21 @@ families:
   capital_action:
     name_zh: "资本行动"
     question_zh: "公司最近有没有用真金白银回报股东？"
-    metrics: [evt_dividend_change, evt_net_share_reduction]
+    metrics: [evt_dividend_change]
     planned_metrics: [evt_buyback]
-    absence_means: unknown
+    absence_means: no_signal
+    absence_requires: "近 100 日有财务文档；否则 unknown"
     threshold:
       min_known: 1
       min_hits: 1
       hit_rules:
         - {metric: evt_dividend_change, rule: any_up_event, window_days: 30}
-        - {metric: evt_net_share_reduction, rule: min_reduction, value: 0.01}
     fail_rule: null
     measured:
       known_share: {note: "配当修正可算；回购公告 0%（TDnet 尚未入库）；股数变化须回填到上年同期。未测全家族覆盖率。"}
       hits_all: null
       hits_liquid_core: null
-    independence_note: "evt_net_share_reduction 与 yield_net_payout 用同一份股数变化；evt_buyback 启用后前者转为展示。"
+    independence_note: "TDnet 前只有配当修正一项。股数变化已在 F-Score、gate_dilution 里用过，不再计入。"
     evidence_summary: "回购规模样本大但窗口含公告前（moderate），且数据缺失；配当修正 moderate。只作可选确认，不作必要条件。"
 
   price_dislocation:
