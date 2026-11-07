@@ -16,6 +16,7 @@ import requests
 
 from jpscan.connectors.edinet import (EdinetAuthError, EdinetClient, EdinetError, EdinetKeyMissing, EdinetNotFound,
                                       doc_kind, normalize_sec_code, parse_code_list)
+from jpscan.connectors.edinet_csv import decode_csv_bytes, parse_csv_bytes, parse_financial_csv_zip, to_number
 from jpscan.ledger import Ledger
 from jpscan.paths import DataPaths
 from jpscan.store import Store
@@ -342,6 +343,83 @@ def test_doc_id_is_validated_before_use_in_paths(env, bad):
 def test_doc_type_is_validated(env):
     with pytest.raises(ValueError):
         make_client(env, FakeSession([])).doc_path("S100TST1", 9)
+
+
+# ---------------- CSV 解析 ----------------
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-16-le", "utf-8-sig", "utf-8", "cp932"])
+def test_decode_detects_encoding(encoding):
+    raw = tsv_bytes(FIN_ROWS[:2], encoding=encoding)
+    text, _ = decode_csv_bytes(raw)
+    assert "要素ID" in text and "売上高" in text
+
+
+@pytest.mark.parametrize("encoding,sep", [("utf-16", "\t"), ("utf-16-le", "\t"), ("cp932", ","), ("utf-8-sig", ","), ("utf-8", "\t"), ("utf-8", ";")])
+def test_parse_csv_handles_encoding_and_delimiter(encoding, sep):
+    df = parse_csv_bytes(tsv_bytes(FIN_ROWS[:3], encoding=encoding, sep=sep), "D", "f.csv")
+    assert list(df["element_id"]) == ["jppfs_cor:NetSales"] * 3
+    assert df.loc[0, "item_name"] == "売上高" and df.loc[0, "numeric_value"] == 1000000.0
+    assert df.loc[2, "consolidated_flag"] == "個別" and df.loc[0, "docID"] == "D" and df.loc[0, "file"] == "f.csv"
+
+
+def test_header_heuristics_variants():
+    header = ["要素 ＩＤ", "項目名称", "コンテキストＩＤ", "相対年度", "連結/個別", "期間/時点", "ユニットＩＤ", "単位", "値"]
+    df = parse_csv_bytes(tsv_bytes(FIN_ROWS[:1], header=header), "D", "f.csv")
+    row = df.iloc[0]
+    assert row["element_id"] == "jppfs_cor:NetSales" and row["context_id"] == "CurrentYearDuration"
+    assert row["consolidated_flag"] == "連結" and row["period_type"] == "期間" and row["unit_id"] == "JPY" and row["item_name"] == "売上高"
+
+
+def test_unrecognized_csv_returns_none():
+    assert parse_csv_bytes("foo,bar\r\n1,2\r\n".encode("utf-8")) is None
+    assert parse_csv_bytes(b"") is None
+
+
+def test_to_number_rules():
+    assert to_number("1,234") == 1234.0
+    assert to_number("-5") == -5.0
+    assert to_number("△5") == -5.0
+    assert to_number("-") == 0.0            # 操作ガイド：値が「-」は明示的に 0
+    assert to_number("－") == 0.0
+    assert np.isnan(to_number("-", has_unit=False))
+    assert np.isnan(to_number("99990", has_unit=False))   # 无单位视为文本
+    assert np.isnan(to_number("2026-03-31"))
+    assert np.isnan(to_number(None))
+    assert np.isnan(to_number("nan")) and np.isnan(to_number("inf"))
+
+
+def test_parse_zip_long_table(tmp_path):
+    z = tmp_path / "S100TST1_5.zip"
+    z.write_bytes(make_csv_zip())
+    df = parse_financial_csv_zip(z)
+    assert set(df["docID"]) == {"S100TST1"}
+    assert list(df.columns) == ["docID", "file", "element_id", "item_name", "context_id", "relative_year", "consolidated_flag", "period_type",
+                                "unit_id", "unit", "value", "numeric_value"]
+    assert df.attrs["skipped_files"] == ["unrelated.csv"]
+    assert len(df) == len(FIN_ROWS) + 1
+    by = df.set_index(["element_id", "context_id"])
+    assert by.loc[("jppfs_cor:ShortTermInvestmentSecurities", "CurrentYearInstant"), "numeric_value"] == 0.0   # 「-」
+    text = by.loc[("jpcrp_cor:DescriptionOfBusinessTextBlock", "FilingDateInstant")]
+    assert text["value"] == "架空の事業を営む。\n\"引用\"を含む。"           # 引号转义与内嵌换行
+    assert pd.isna(text["unit_id"])                                         # 「-」→ 空
+    assert np.isnan(text["numeric_value"])
+    assert np.isnan(by.loc[("jpdei_cor:SecurityCodeDEI", "FilingDateInstant"), "numeric_value"])  # 证券代码不当数值
+    custom = by.loc[("jpcrp030000-asr_E99990-000:CustomElement", "CurrentYearDuration")]
+    assert pd.isna(custom["item_name"])                                                           # 空白项目名
+
+
+def test_parse_zip_without_folder_falls_back_and_empty_zip(tmp_path):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("data.csv", tsv_bytes(FIN_ROWS[:1]))
+    p = tmp_path / "S100TST2_5.zip"
+    p.write_bytes(buf.getvalue())
+    assert len(parse_financial_csv_zip(p)) == 1
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("readme.txt", "none")
+    p = tmp_path / "S100TST3_5.zip"
+    p.write_bytes(buf.getvalue())
+    assert parse_financial_csv_zip(p).empty
 
 
 # ---------------- 代码表 ----------------
