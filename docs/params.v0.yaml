@@ -2,9 +2,12 @@
 # 版本规则：语义化版本；任何修改须更新 version、changelog，并在文档「变更记录」中说明理由。
 # 所有金额单位：円；比率为小数；天数为交易日（除非注明）。
 # 证据等级（evidence_level）：institutional=制度依据, empirical=实证依据, heuristic=经验, hypothesis=假设
-version: "0.1.0"
+version: "0.2.0"
 as_of: "2026-11-07"
 changelog:
+  - version: "0.2.0"
+    date: "2026-11-07"
+    note: "用户要求：筛选不能靠单一参数（PBR 只是举例），并要明确筛选理由。新增 evidence 块；指标、家族、篮子改由 config/metric_registry.yaml 决定，六维加权（value/growth/quality/trend/news 的 weights、value.strong 等）不再用于入池和排序，保留只为展示和文档对照。全部阈值仍是先验，未做收益检验。"
   - version: "0.1.0"
     date: "2026-11-07"
     note: "初版；全部数值为先验初值，待第 7 章验证流程校准"
@@ -189,7 +192,45 @@ exclusions:
     S07_low_price_jpy: 100
   tob_min_upside: 0.03
 
-bucket:
+evidence:                                           # 多证据硬规则（规划文档 4.11 节）。evidence_level: 口径防错 + 先验，未做收益检验
+  # 指标、家族、命中阈值、篮子要求、行业覆盖都在 config/metric_registry.yaml，这里不重复，避免两处不一致。
+  # 这里放的是注册表里只有文字、没有机器可读数值的门槛，以及不靠单一指标的全局规则。
+  registry_path: "config/metric_registry.yaml"
+  min_families: 3                                   # 入池至少要几个证据家族 hit。unknown 不算。一个家族内多个指标只算一份证据
+  loo_rank_mult: 2                                  # 留一法：去掉任何一个 score 指标后排名超过 top_n × 此值，移出清单
+  max_dimension_share: 0.5                          # 一个家族占证据强度超过此比例时标记「证据集中」，只提示不移出
+  downgrade_penalty: 1.0                            # 触发降级门槛时，排序键减去的家族数
+  downgrade_gates: [gate_distress, gate_sector_equity, guid_remaining_growth, gate_inorganic, gate_dilution]
+  # 业务质量家族 fail 线（registry qual_fscore7）
+  fscore_fail_max: 2
+  fscore_share_tolerance: 0.005                     # 股数增加不超过此比例算未稀释（防止股票期权扣分）
+  # B2 估值上限：val_fwd_ep 不在同业最差这个比例
+  valuation_cap_worst_share: 0.30
+  # 门槛数值（registry 文字中的先验）
+  one_off_ratio: 0.85                               # gate_one_off：FNP/基准 >= 此值
+  one_off_loss_ratio: 0.40                          # gate_one_off：FNP/FOdP <= 此值只标记
+  sector_equity_bottom_share: 0.10                  # gate_sector_equity：行业内最低 10%
+  sector_equity_abs_max: 0.30                       # 且 EqAR 低于此值
+  dilution_share_growth: 0.10                       # gate_dilution：还原分割后股数同比
+  inorganic_ta_change: 0.20                         # gate_inorganic：合并范围变化且 |TA 同比| >= 此值
+  fy_days_normal: [350, 380]                        # 正常财年天数；staging.fy_months 有错，用天数判断
+  disclosure_lag_days: 45                           # gate_disclosure_delay
+  remaining_growth_flag: 0.50                       # guid_remaining_growth：必要增益率 >= 此值
+  remaining_gap_flag: 0.50                          # 分母 <= 0 时：缺口 / |fc| > 此值
+  miss_bullish_median_mult: 2.0                     # gate_miss_then_bullish：增速 > max(倍数 × 行业中位, 下限)
+  miss_bullish_growth_floor: 0.10
+  revision_main_min_share: 0.5                      # guid_revision_event：主业变动 >= 净利变动的这个比例才算确认
+  capital_action_recent_doc_days: 100               # capital_action：多少自然日内有财务文档才算「知道没有事件」
+  # 错杀
+  rev_window_days: 21                               # rev_1m 窗口
+  cause_proxy_drop: -0.05                           # 业绩型代理：单日相对跌幅
+  cause_wait_days: 21                               # 业绩型下跌等待
+  cause_wait_days_negative_guidance: 60             # 翌期指引差时最长等待
+  # 外部名单（防前视）
+  supervision_unknown_days: 90                      # 没有解除日的历史指定：距今这么多天内算「无法确定」
+  current_list_max_age_days: 40                     # 只有当前版本的名单（改善期间）：基准日距发布日超过此值不使用
+
+bucket:                                             # 入池要求见 metric_registry.yaml buckets；下面的 weights 和 entry 只留作 v0.1 对照，不再使用
   top_n: 40
   B1_value_reversal:
     weights: {value: 0.35, quality: 0.25, growth: 0.10, oversold: 0.10, trend: 0.10, news: 0.10}
