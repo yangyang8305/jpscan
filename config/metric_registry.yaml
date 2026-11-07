@@ -1571,17 +1571,17 @@ metrics:
     plain_zh: "如果预计净利润接近甚至超过主业利润，低 PER 很可能是卖资产之类的一次性收益造成的假便宜。"
     purpose: exclusion_filter
     direction: flag
-    formula: "FNP/FOdP>=0.85 或 FNP/FOP>=1.0（IFRS 无 FOdP）：val_fwd_ep 不算命中并标黄；FNP/FOdP<=0.4 只标记（可能是一次性亏损压低利润）。"
-    data_needed: "financial_statements.FNP, FOdP, FOP"
+    formula: "base = fc(FOdP)；无 FOdP 的公司（IFRS 等）base = fc(FOP)。fc(FNP)>0 且（base<=0 或 fc(FNP)/base>=0.85）时 val_fwd_ep 不算命中并标黄：主业亏损靠一次性收益转盈也在内。fc(FNP)<=0 不标一次性（双亏不是一次性利润）。fc(FNP)/fc(FOdP)<=0.4 且分母>0 只标记（可能是一次性亏损压低利润）。字段未知时放行并列入未检查。"
+    data_needed: "financial_statements.FNP, FOdP, FOP, NxFNp, NxFOdP, NxFOP"
     available_on_free_plan: true
-    free_plan_note: "覆盖受回填限制，有文档者 Prime 82%、Standard 84%、Growth 66%。"
+    free_plan_note: "未知比例 Prime 7%、Standard 6%、Growth 14%（2026-08-14）。无 FOdP 的公司线由 1.0 改为 0.85：实测 1.0 时标记率 2.4%，有 FOdP 的公司 10.1%，0.85 时 6.9%，两边分布中位接近（0.66、0.68）。"
     stale_on_free: false
     unlocks_with: "明细：TDnet 文本"
     sector_rules: "投资收益占比高的行业要豁免或看同业：海运 FNP/FOP 约 1.59，商社 NP/OP 约 1.42。银行无 FOP，用 FOdP。"
     status: gate
     planned_status: gate
     evidence_strength: weak
-    evidence: "自己测出的现象，无日本专项文献。FNP/FOdP>=0.85 在 FwdPER<10 组占 16.4%，其余组 9.3%；FNP/FOP>1 全样本 7.5%，FwdPER<10 组 11.3%。"
+    evidence: "自己测出的现象，无日本专项文献。旧公式 FNP/FOdP>=0.85 漏掉 FNP>0 且基准<=0 的 10 家（比值为负），又误标双亏的 101 家（比值为正）。FNP/FOdP>=0.85 在 FwdPER<10 组占 16.4%，其余组 9.3%；FNP/FOP>1 全样本 7.5%，FwdPER<10 组 11.3%。"
     why: "成本为零，能直接净化低 PER 名单。阈值为分布取值，未做收益检验。"
 
   - id: gate_div_cover
