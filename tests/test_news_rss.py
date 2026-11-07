@@ -233,3 +233,100 @@ def test_config_feeds_are_well_formed():
     assert len({f["source"] for f in feeds}) == len(feeds)
     assert len({f["url"] for f in feeds}) == len(feeds)
     assert all(f["tier"] in {"L2", "L3"} and f["url"].startswith("https://") and f["name"] for f in feeds)
+
+
+# ---------- 作业（假 HTTP，不联网） ----------
+class _Resp:
+    def __init__(self, content: bytes, status: int = 200):
+        self.content, self.status_code = content, status
+
+
+class _Session:
+    def __init__(self, pages: dict[str, _Resp]):
+        self.pages, self.calls = pages, []
+
+    def get(self, url, params=None, headers=None, timeout=None):
+        self.calls.append(url)
+        return self.pages[url]
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch):
+    from jpscan import jobs  # noqa: F401
+    from jpscan.config import Settings
+    from jpscan.jobs import ingest_news
+    from jpscan.ledger import Ledger
+    from jpscan.paths import DataPaths
+    from jpscan.store import Store
+    monkeypatch.setattr(ingest_news, "MIN_INTERVAL", 0)
+    paths = DataPaths(tmp_path / "data").ensure()
+    store = Store(paths)
+    store.write("staging", "security_master_snapshots", _master(), "2026-08-14")
+    settings = Settings(root=tmp_path, data_dir=paths.root, params_path=tmp_path / "p.yaml", jquants_api_key=None,
+                        anthropic_api_key=None, edinet_api_key=None, fred_api_key=None)
+    return settings, paths, Ledger(paths.ledger_sqlite), store
+
+
+def _install(monkeypatch, pages):
+    from jpscan.jobs import ingest_news
+    sess = _Session(pages)
+    monkeypatch.setattr(ingest_news, "http_session", lambda: sess)
+    return sess
+
+
+def test_job_writes_partitions_and_is_idempotent(env, monkeypatch):
+    from jpscan.jobs import ingest_news
+    settings, paths, ledger, store = env
+    pages = {FEED_Y["url"]: _Resp(YAHOO_XML), FEED_P["url"]: _Resp(PRTIMES_RDF)}
+    sess = _install(monkeypatch, pages)
+    out = ingest_news.run(settings, paths, ledger, store, feeds=[FEED_Y, FEED_P])
+    assert out["status"] == "ok" and out["items"] == 4 and out["matched"] == 3
+    assert out["feeds"]["yahoo_media_a"]["items"] == 2 and out["feeds"]["yahoo_media_a"]["undated"] == 1
+    assert sess.calls == [FEED_Y["url"], FEED_P["url"]]       # 每个 feed 只取一次
+    assert sorted(store.partitions("staging", "news_items")) == ["2026-10", "2026-11"]
+    assert ledger.status_of("news", "prtimes") == "ok"
+
+    raw = list((paths.raw / "news_rss").rglob("*.xml"))
+    assert len(raw) == 2
+
+    # 再跑一次：同内容不重复写原始文件，主键不重复
+    ingest_news.run(settings, paths, ledger, store, feeds=[FEED_Y, FEED_P])
+    assert len(list((paths.raw / "news_rss").rglob("*.xml"))) == 2
+    df = store.read("staging", "news_items")
+    assert len(df) == 4 and df["news_id"].is_unique
+    assert set(df["tier"]) == {"L2", "L3"}
+
+
+def test_job_duplicate_link_keeps_earlier_feed(env, monkeypatch):
+    from jpscan.jobs import ingest_news
+    settings, paths, ledger, store = env
+    _install(monkeypatch, {FEED_Y["url"]: _Resp(YAHOO_XML), FEED_C["url"]: _Resp(YAHOO_XML)})
+    out = ingest_news.run(settings, paths, ledger, store, feeds=[FEED_Y, FEED_C])
+    assert out["items"] == 2
+    assert set(store.read("staging", "news_items")["source"]) == {"yahoo_media_a"}
+
+
+def test_job_one_bad_feed_does_not_stop_others(env, monkeypatch):
+    from jpscan.jobs import ingest_news
+    settings, paths, ledger, store = env
+    _install(monkeypatch, {FEED_Y["url"]: _Resp(b"gone", 404), FEED_C["url"]: _Resp(b"<html>not a feed</html>"),
+                           FEED_P["url"]: _Resp(PRTIMES_RDF)})
+    out = ingest_news.run(settings, paths, ledger, store, feeds=[FEED_Y, FEED_C, FEED_P])
+    assert out["status"] == "partial" and out["items"] == 2
+    assert out["feeds"]["yahoo_media_a"]["status"] == "error" and "404" in out["feeds"]["yahoo_media_a"]["error"]
+    assert ledger.status_of("news", "yahoo_media_a") == "error"
+    assert ledger.status_of("news", "yahoo_category_c") == "error"
+    assert list(paths.quarantine.rglob("*.bin"))             # 解析不出条目的响应进隔离区
+
+
+def test_job_without_master_still_collects(env, monkeypatch, tmp_path):
+    from jpscan.jobs import ingest_news
+    from jpscan.ledger import Ledger
+    from jpscan.paths import DataPaths
+    from jpscan.store import Store
+    settings = env[0]
+    paths = DataPaths(tmp_path / "other").ensure()
+    store = Store(paths)
+    _install(monkeypatch, {FEED_P["url"]: _Resp(PRTIMES_RDF)})
+    out = ingest_news.run(settings, paths, Ledger(paths.ledger_sqlite), store, feeds=[FEED_P])
+    assert out["items"] == 2 and out["matched"] == 0
