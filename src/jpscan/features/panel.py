@@ -80,6 +80,31 @@ def cum_after_matrix(adj_events: pd.DataFrame, dates: pd.DatetimeIndex, codes) -
     return pd.DataFrame(out, index=dates, columns=codes)
 
 
+def cum_after_at(adj_events: pd.DataFrame, codes, dates) -> np.ndarray:
+    """逐行 as-of 版：∏ AdjFactor(s)，s 晚于该行日期。日期不必在面板里，也不必是交易日；空日期返回 NaN。"""
+    codes = np.asarray(codes, dtype=object)
+    d = pd.to_datetime(pd.Series(dates).reset_index(drop=True)).astype("datetime64[us]").to_numpy()
+    out = np.ones(len(codes), dtype=np.float64)
+    out[np.isnat(d)] = np.nan
+    if adj_events is None or adj_events.empty:
+        return out
+    ev = adj_events.sort_values(["Code", "Date"])
+    code_pos = pd.Series(codes).groupby(codes, sort=False).indices
+    for code, g in ev.groupby("Code", sort=False):
+        pos = code_pos.get(code)
+        if pos is None:
+            continue
+        ed = g["Date"].astype("datetime64[us]").to_numpy()
+        ef = g["AdjFactor"].to_numpy(dtype=float)
+        # suffix[i] = ef[i] * ef[i+1] * ...；日期 d 之后的第一个事件位置 k → B = suffix[k]
+        suffix = np.append(np.cumprod(ef[::-1])[::-1], 1.0)
+        k = np.searchsorted(ed, d[pos], side="right")
+        vals = suffix[k]
+        vals[np.isnat(d[pos])] = np.nan
+        out[pos] = vals
+    return out
+
+
 def back_adjust(df: pd.DataFrame, adj_events: pd.DataFrame | None = None) -> pd.DataFrame:
     """长表版后复权：给 O/H/L/C 乘、给 Vo 除以「此后 AdjFactor 之积」。主要供校验与其他模块使用。"""
     d = df.sort_values(["Code", "Date"]).reset_index(drop=True).copy()
@@ -233,6 +258,11 @@ def technical_features(df: pd.DataFrame, params: dict, adj_events: pd.DataFrame 
     res["limit_up"] = res["UL"].astype(str).isin(["1", "1.0"])
     res["limit_down"] = res["LL"].astype(str).isin(["1", "1.0"])
     res = res.drop(columns=["UL", "LL"])
+    # 比率类列用 float32 足够，两年 200 多万行能省下不少内存；价格和金额保留 float64
+    keep64 = {"C", "O", "H", "L", "adj_c", "cum_after", "Vo", "Va", "MktCap", "adv20_turnover"}
+    for c in res.columns:
+        if c not in keep64 and res[c].dtype == "float64":
+            res[c] = res[c].astype("float32")
     res = res.merge(mkt[["Date", "mkt_ret", "mkt_source"]], on="Date", how="left")
     return res.sort_values(["Code", "Date"]).reset_index(drop=True)
 
