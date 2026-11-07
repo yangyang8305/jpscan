@@ -1156,3 +1156,285 @@ metrics:
     evidence: "各事件方向部分有证据（G2-22、G2-25、G2-26、G2-27），强度等级和半衰期是假设。例如回购固定 +2/+3 与 G2-22 的规模连续关系不符。"
     why: "校准前不合成总分。事件逐类展示，有证据的类别才进入对应家族。events.yaml 的分类本身继续使用。"
 
+  # ---------- 价格错位 ----------
+  - id: rev_1m
+    family: price_dislocation
+    aliases: [one_month_reversal]
+    name_zh: "1 个月反转（行业调整）"
+    plain_zh: "上个月比同行跌得最多的股票，这个月往往反弹。"
+    purpose: mispricing_oversold
+    direction: lower_better
+    formula: "AdjC(t)/AdjC(t−21) − 1 减去同 S33 中位；可跳过最近 1 日以减少买卖价差影响；只在流动性门槛内使用。"
+    data_needed: "prices_daily.AdjC；security_master.S33"
+    available_on_free_plan: true
+    free_plan_note: "当日覆盖 99.8%。最差 10% 的分界约 −8.6%，命中 369 只，其中流动性核心池内 207 只。"
+    stale_on_free: true
+    unlocks_with: "实盘：J-Quants Light 以上去掉 12 周延迟"
+    sector_rules: "无行业例外，但行业整体下跌不会触发，这是有意的。"
+    status: score
+    planned_status: score
+    evidence_strength: moderate
+    evidence: "存在性证据强但偏老：东证 1975-1997 研究；Chou-Wei-Chung 2007。KAKEN 20K01746：反转在超小型股中最强，那里成本也最高 https://kaken.nii.ac.jp/en/report/KAKENHI-PROJECT-20K01746/20K01746seika 。近期扣成本检验未找到。实测与所有估值、质量指标行业内秩相关都接近 0（绝对值不超过 0.15），是最独立的一条。"
+    why: "错杀维度最有直接根据的学术信号。必须用保守成本检验，Free 上只能研究。"
+
+  - id: rev_no_news_loser
+    family: price_dislocation
+    aliases: [T6, no_news]
+    name_zh: "无消息下跌"
+    plain_zh: "股价大跌但当时没有公司新闻的股票，反弹远比有坏消息的股票明显。"
+    purpose: mispricing_oversold
+    direction: flag
+    formula: "rev_1m 命中，且窗口内最大单日相对跌幅日前后 ±1 日无决算文档（DiscDate、earnings_calendar.SchDate）、无 staging.disclosures 事件。TDnet 缺失时只算决算代理，并写明「只排除了决算新闻」。"
+    data_needed: "prices_daily；financial_statements.DiscDate；earnings_calendar；staging.disclosures"
+    available_on_free_plan: true
+    free_plan_note: "只有决算代理。实测决算季跌幅>=10% 的股日只有 38% 在 ±1 日内有财务文档，其余至少 62% 须靠 TDnet 才能分清。"
+    stale_on_free: true
+    unlocks_with: "TDnet 每日采集（免费，错过的日子免费补不回来）；历史需 J-Quants TDnet 附加包"
+    sector_rules: "无。"
+    status: score
+    planned_status: score
+    evidence_strength: moderate
+    evidence: "Tsukioka 等 2017（JSAI 会议论文，1985-2010，数字表文本错位，全样本约 135% vs 45%，高频调仓的毛收益，不可直接交易）https://www.ai-gakkai.or.jp/jsai2017/webprogram/2017/paper-583.html ；Bremer 等 1997（已读摘要，作者判断普通投资者难以获利）https://www.cambridge.org/core/journals/journal-of-financial-and-quantitative-analysis/article/predictable-patterns-after-large-stock-price-changes-on-the-tokyo-stock-exchange/7EA5B0921EC83DDAEA4860FC279372AE 。样本止于 2010，后续复现未找到。"
+    why: "对草案的方向性修正：归因表把无明确原因当作缺口，文献提示它可能是最好的一类，业绩型反而可能继续下跌。它只提高 rev_1m 命中者的排序，不算独立的第二次命中。回测只能用代理，须披露。"
+
+  - id: rev_drawdown_triggers
+    family: price_dislocation
+    aliases: [O1, O2, O3, oversold.trigger]
+    name_zh: "固定阈值急跌触发"
+    plain_zh: "比如 20 个交易日内回撤 20%，或单日跌 10% 且放量，并标记是否跌停买不到。"
+    purpose: mispricing_oversold
+    direction: flag
+    formula: "params.oversold.trigger.*：C/max(C,60)−1、单日跌幅、Vo/mean(Vo,20)；LL=1 标记跌停。"
+    data_needed: "prices_daily.AdjC, Vo, UL, LL"
+    available_on_free_plan: true
+    free_plan_note: "28 个交易日跌>=10% 共 461 股日（放量 138），LL=1 共 72。"
+    stale_on_free: true
+    unlocks_with: "实盘：J-Quants Light 以上"
+    sector_rules: "高波动股更易触发，有改用波动率标准化的必要。"
+    status: display
+    planned_status: gate
+    evidence_strength: weak
+    evidence: "阈值无日本学术检验。G2-31（实务回测，无成本）：跳空>=−7% 后 5 日胜率 58%、均值 +3.4%；单日>=−25% 中位数 0。G2-30 属指数级结果，不能直接用到个股。实测（21 日）：满足单日或回撤触发的股票只有 56% 落在 rev_1m 最差 10%，最差 10% 中 155 只未触发。"
+    why: "研究和数据两方建议作入池门，这里先只用来标出事件日供归因：入池已由 rev_1m 承担，固定阈值没有检验也不应调优。波动率标准化版本经检验后再作门。"
+
+  - id: rev_cause_class
+    family: price_dislocation
+    aliases: [O2, CAUSE_CLASS, T1-T6]
+    name_zh: "下跌原因分类"
+    plain_zh: "判断下跌是因为业绩、融资、丑闻、资金面，还是大盘一起跌。"
+    purpose: mispricing_oversold
+    direction: flag
+    formula: "事件日 −5 到 +1 匹配 disclosures 事件并分 T1-T6；增加优待废止、分红政策变更、TOB 失败三类；再与行业和 TOPIX 同期比较。T1 业绩型按 guid_earnings_reaction 为负时等待 21 个交易日，SUPF 为负时最长 60 日。"
+    data_needed: "staging.disclosures；financial_statements；prices_daily；security_master.S33"
+    available_on_free_plan: false
+    free_plan_note: "只用 J-Quants 无法完成（见 rev_no_news_loser）。TDnet 作业代码已有，但 staging.disclosures 尚无数据。"
+    stale_on_free: true
+    unlocks_with: "TDnet 每日采集（免费）；历史需 J-Quants TDnet 附加包（¥11,000/月）"
+    sector_rules: "无。"
+    status: gate
+    planned_status: gate
+    evidence_strength: moderate
+    evidence: "G2-18、G2-19、G2-26、G2-27、G2-29、G2-31。无条件抄底优势有限。三个新增类别属实务判断，无专门证据。"
+    why: "错杀判断的核心步骤。TDnet 接入前结果为「未归因」，只显示，不算通过也不算不通过。"
+
+  - id: rev_intact_test
+    family: price_dislocation
+    aliases: [O3, F2, F4, F5]
+    name_zh: "基本面完好检验"
+    plain_zh: "股价大跌后，公司的业绩预期和分红是否也同等恶化；没有的话才可能是错杀。"
+    purpose: mispricing_oversold
+    direction: flag
+    formula: "下列已知项全部通过：窗口内 guid_revision_event 未下修；evt_dividend_change 未下调；guid_remaining_growth 未标记；gate_distress 未触发。未知项不算通过，也不算不通过，并列入「未检查」。"
+    data_needed: "同所引用的指标"
+    available_on_free_plan: true
+    free_plan_note: "文档 F4 的负债条件 Free 判不了，已改用 gate_distress 与 gate_sector_equity。"
+    stale_on_free: true
+    unlocks_with: "负债项：EDINET"
+    sector_rules: "金融业跳过分红以外的通用项。"
+    status: gate
+    planned_status: gate
+    evidence_strength: weak
+    evidence: "H3 明确为假设，本工具尚无验证。文档 5 选 3 的阈值未经检验，已取消。"
+    why: "逻辑必须保留。首轮回测要统计每一项的增量贡献，没有增量的项删掉。"
+
+  - id: rev_f1_guidance_uncut
+    family: price_dislocation
+    aliases: [F1, DOC_F1_GUIDANCE_UNCUT]
+    name_zh: "文档 F1：通期预想未下修"
+    plain_zh: "只看公司有没有下调全年目标，就判断基本面没坏。"
+    purpose: mispricing_oversold
+    direction: flag
+    formula: "事后 FOP 未下修或下修<=10%"
+    data_needed: "financial_statements.FOP"
+    available_on_free_plan: true
+    free_plan_note: "能算。"
+    stale_on_free: true
+    unlocks_with: null
+    sector_rules: "无。"
+    status: excluded
+    planned_status: excluded
+    evidence_strength: none
+    evidence: "实测 2026 年 1Q（FwdEPS 代理）：公告日超额跌幅>=5% 的 n=285 通过率 98.6%，跌幅>=10% 的 n=84 通过率 97.6%。3Q 与 FY 待回填后重测。"
+    why: "1Q 几乎不具区分力，因为 ±30% 修正线前公司可以不改。由 guid_remaining_growth 替代。"
+
+  - id: rev_reaction_ratio
+    family: price_dislocation
+    aliases: [O4, R, DOC_R_RATIO]
+    name_zh: "价格反应比 R"
+    plain_zh: "股价跌幅除以预测利润降幅，看是否跌过头。"
+    purpose: mispricing_oversold
+    direction: higher_better
+    formula: "|Δpx_event| / max(|ΔFEPS/FEPS_prev|, 0.05)"
+    data_needed: "prices_daily；financial_statements.FEPS"
+    available_on_free_plan: true
+    free_plan_note: "能算。"
+    stale_on_free: true
+    unlocks_with: null
+    sector_rules: "无。"
+    status: excluded
+    planned_status: excluded
+    evidence_strength: none
+    evidence: "未找到任何检验。公式推导：指引不变时分母恒为 5%，任何>=10% 的跌幅都得 R>=2；实测>=10% 跌幅中 73% 指引在 ±1% 内。"
+    why: "草案让它占错杀分 40 分，多数情况下只是把跌幅重新表达一次。scoring 代码须同步移除。"
+
+  - id: rev_long_term
+    family: price_dislocation
+    aliases: [long_term_reversal]
+    name_zh: "中长期反转"
+    plain_zh: "过去两三年落后的股票，之后有回升倾向。"
+    purpose: mispricing_oversold
+    direction: lower_better
+    formula: "过去 12-36 个月累计收益，跳过最近 1 个月；Free 最长 24 个月。"
+    data_needed: "prices_daily.AdjC"
+    available_on_free_plan: true
+    free_plan_note: "窗口不足 3 年，价格仍在回填。"
+    stale_on_free: false
+    unlocks_with: "J-Quants Standard（10 年）"
+    sector_rules: "无。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "Chou-Wei-Chung 2007；样本较老，并与 PBR 高度相关，增量未知。"
+    why: "可能只是价值因子的另一种度量，先做相对 B/M 的增量检验。"
+
+  # ---------- 趋势（背景） ----------
+  - id: mom_12_1
+    family: context
+    aliases: [T3 部分]
+    name_zh: "传统 12-1 动量"
+    plain_zh: "过去一年（不含最近一个月）涨得多的股票继续涨。"
+    purpose: trend_timing
+    direction: higher_better
+    formula: "AdjC(t−21)/AdjC(t−252) − 1"
+    data_needed: "prices_daily.AdjC"
+    available_on_free_plan: true
+    free_plan_note: "价格回填后可算。"
+    stale_on_free: false
+    unlocks_with: "回填到 2025-08"
+    sector_rules: "无。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "长期接近零：G2-04（1990-2026 约 1.1%/年）；G2-10（Sharpe≈0.03）；Ross 2025 全样本 0.91%/年、不显著。MSCI 动量指数 2020s +2.6%/年，时间太短。"
+    why: "防范「便宜但一直在跌」有价值，不足以作稳定因子。"
+
+  - id: mom_idio
+    family: context
+    aliases: [idiosyncratic_momentum]
+    name_zh: "特质动量"
+    plain_zh: "扣除大盘影响后，这只股票自身的上涨趋势。"
+    purpose: trend_timing
+    direction: higher_better
+    formula: "日或周收益对市场收益回归的残差累计（t−252 至 t−21）除以残差波动；Free 用全市场市值加权代理。"
+    data_needed: "prices_daily.AdjC；自算市场收益（Light 有 TOPIX）"
+    available_on_free_plan: true
+    free_plan_note: "须价格回填完成；2 年窗口勉强够。"
+    stale_on_free: false
+    unlocks_with: "回填到 2025-08；更稳需 J-Quants Light 以上"
+    sector_rules: "无。"
+    status: display
+    planned_status: score
+    evidence_strength: moderate
+    evidence: "只见搜索摘要：Chaves 2016、Hanauer & Windmüller 2023（48 个市场）https://alphaarchitect.com/swedroe-spotlight-enhancing-momentum-strategies-via-idiosyncratic-momentum/ 。反面：非正式复现称发表后 alpha 消失；未读到日本具体 t 值。"
+    why: "如果趋势要进评分，这是日本证据相对最好的形式，且与价值负相关。但未读原文也未本地检验，先展示；通过后才算第七个家族。"
+
+  - id: trend_sector_rs
+    family: context
+    aliases: [T3]
+    name_zh: "行业相对强弱"
+    plain_zh: "这只股票比同行业强还是弱。"
+    purpose: trend_timing
+    direction: higher_better
+    formula: "ret(stock,n) − 自制 33 业种中位收益，n∈{21,63,126}；Free 没有 TOPIX，用全市场自制基准。"
+    data_needed: "prices_daily；security_master.S33"
+    available_on_free_plan: true
+    free_plan_note: "短窗口现在可算。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "无。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "H4、G2-10、G2-04；行业相对优于绝对属文档判断，无专门文献。"
+    why: "只作择时展示，不提供 alpha。"
+
+  - id: trend_ma_52w
+    family: context
+    aliases: [T1, T2, T4, T5, T10]
+    name_zh: "均线结构、52 周高点、量能"
+    plain_zh: "股价站在均线上方还是下方，离一年高点多远，成交是否放大。"
+    purpose: trend_timing
+    direction: none
+    formula: "C/MA(C,25/75/200)；MA25 斜率；C/max(C,250)−1；adv20/mean(Va,120)；阶段分类见附录 B.5。"
+    data_needed: "prices_daily.C, Va"
+    available_on_free_plan: true
+    free_plan_note: "价格回填后可算。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "无。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "G2-11：52 周高点扣成本后多数市场不显著。均线阶段分类未找到日本证据。"
+    why: "趋势分中 40 分的阶段分缺少依据。只帮助看图，不进分数。"
+
+  - id: sd_margin
+    family: context
+    aliases: [T8, CREDIT_OVERHANG]
+    name_zh: "信用买入残高"
+    plain_zh: "借钱买这只股票的散户仓位有多重，大跌后可能被迫卖出。"
+    purpose: quality_risk
+    direction: none
+    formula: "信用買残/mean(Vo,20)；信用買残/信用売残；事件前后增量。"
+    data_needed: "J-Quants margin-interest（Standard）或 JPX 周次文件"
+    available_on_free_plan: false
+    free_plan_note: "文档 Step 5 的需给判断 Free 上无法执行，标为未检查，不得默认通过。"
+    stale_on_free: false
+    unlocks_with: "J-Quants Standard；JPX 周次 PDF 机器可读性差"
+    sector_rules: "个人占比高的小盘逻辑上更相关，但没有证据。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "结论冲突：Hirose 等 2009 对小盘短期有预测力 https://ideas.repec.org/a/eee/pacfin/v17y2009i1p41-57.html ；Lee & Ko 2016 不预测永久收益变化 https://ideas.repec.org/a/eee/finana/v45y2016icp47-53.html 。均只见摘要。"
+    why: "不值得单独为此付费。随 Standard 附带拿到后先展示和检验。"
+
+  - id: sd_short_interest
+    family: context
+    aliases: [T9]
+    name_zh: "空売り残高"
+    plain_zh: "机构做空这只股票的比例。"
+    purpose: quality_risk
+    direction: none
+    formula: ">=0.5% 申报持仓合计 / 发行股数"
+    data_needed: "J-Quants short-sale-report（Standard）；JPX 免费文件覆盖不全"
+    available_on_free_plan: false
+    free_plan_note: "Free 无此字段。"
+    stale_on_free: false
+    unlocks_with: "J-Quants Standard"
+    sector_rules: "0.5% 申报制只覆盖大额头寸，小盘多为缺失。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "多市场研究摘要称做空有横截面预测力，日本结果未单独看到。"
+    why: "不应把高做空直接解读为利好或利空。"
+
