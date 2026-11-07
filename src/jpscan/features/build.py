@@ -269,7 +269,8 @@ def compute_fundamental_metrics(d: pd.DataFrame, params: dict, adj_events: pd.Da
     d["days_since_report"] = (pd.to_datetime(d["Date"]) - pd.to_datetime(d["last_stmt_disc_date"])).dt.days
     d["stale_financials"] = d["days_since_report"] > float(pget(params, "universe.stale_financials_days", 135))
     d["days_since_any_doc"] = (pd.to_datetime(d["Date"]) - pd.to_datetime(d["DiscDate"])).dt.days
-    d["is_financial"] = d["S33Nm"].astype(str).isin(FINANCIAL_S33)
+    firm_fin = {str(k) for k, v in (load_registry(params).get("firm_overrides") or {}).items() if v.get("route_as") == "金融"}
+    d["is_financial"] = d["S33Nm"].astype(str).isin(FINANCIAL_S33) | d["Code"].isin(firm_fin)
     d["is_common_stock"] = d["ProdCat"].astype(str).eq("011") & d["Code"].astype(str).str.endswith("0")
     d["in_tse_main"] = d["Mkt"].astype(str).isin(["0111", "0112", "0113"])
     liq = params.get("liquidity", {})
