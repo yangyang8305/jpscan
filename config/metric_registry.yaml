@@ -44,18 +44,18 @@ metrics:
     plain_zh: "在同行业、赚钱能力相近的公司里，这家公司的 PBR 比应有水平低多少。"
     purpose: undervaluation
     direction: lower_better
-    formula: "每日按市场 Mkt 分别回归 ln(PBR) = S33 行业固定效应 + b*ln(FwdROE)，样本限 PBR>0 且 FwdROE>0.005，FwdROE 上限 0.5；取残差，越负越便宜。FwdROE<=0.005 记为未命中，不当作便宜。"
+    formula: "每日按市场 Mkt 分别回归 ln(PBR) = 行业固定效应 + b*ln(FwdROE)，样本限 PBR>0 且 FwdROE>0.005，FwdROE 上限 0.5；行业效应用 S33，单元格不足 10 只时回退 S17，仍不足 5 只记未知。取残差，越负越便宜，只在同市场内比较分位（两个市场的残差不可直接比）。FwdROE<=0.005 记为未命中，不当作便宜。作为 challenger 检验时同样要 unless_gate: gate_one_off。"
     data_needed: "valuation_daily.PBR, FwdROE；security_master.S33, Mkt"
     available_on_free_plan: true
     free_plan_note: "当日非金融覆盖 Prime 96%、Standard 95%、Growth 84%。"
     stale_on_free: false
     unlocks_with: null
-    sector_rules: "金融业按各自行业单独回归，不与非金融合并。Growth 的解释力太低（R2 约 0.17），残差只展示、不计入家族。"
-    status: score
-    planned_status: score
-    evidence_strength: moderate
-    evidence: "这个公式在日本没有直接检验，属间接支持：G2-05、G2-06、G2-07；Chou-Ko-Rhee 2023（价值加营业盈利的特征模型解释力最好，已读摘要）https://pure.lib.cgu.edu.tw/en/publications/comparing-competing-factor-and-characteristics-models-evidence-in/ 。实测（2026-08-14 单日）：全市场混合的线性口径与原始 B/M 行业内秩相关 0.93，前 30% 名单 89% 重合，等于没有调整；按市场分别回归的对数口径相关降到 0.72、重合 67%，名单中 FwdROE<5% 的比例从原始 B/M 的 44% 降到 21%。b 值 Prime 0.69、Standard 0.44、Growth 0.45。"
-    why: "直接回答「便宜得有没有道理」，比 PBR<1 或硬阈值更连续。这是自己构造的公式，因此保留原始 B/M 作为它必须跑赢的对照。注意 E/P = FwdROE/PBR，所以残差在数学上是 B/M 与 E/P 的混合（实测与 E/P 相关 0.77），两者不算两份独立证据。"
+    sector_rules: "金融业不与非金融共用 b，样本不足 30 只时跨市场估计 b。Growth 的解释力太低（R2 约 0.17）。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "这个公式在日本没有直接检验，只有间接支持：G2-05、G2-06、G2-07；Chou-Ko-Rhee 2023（价值加营业盈利的特征模型解释力最好，已读摘要）https://pure.lib.cgu.edu.tw/en/publications/comparing-competing-factor-and-characteristics-models-evidence-in/ 。实测（2026-08-14 单日）：残差与 E/P 的行业内秩相关 Prime 0.91、Standard 0.73，b 值 Prime 0.69、Standard 0.44、Growth 0.45；残差命中者 19% 带一次性标记，基准 9%。此前引用的「FwdROE<5% 的比例从 44% 降到 21%」是机械结果（回归右侧就放了 ROE），不算证据；ln(C/BPS) 对 ln(EPS/BPS) 共用 BPS 分母，R2 也偏高。"
+    why: "自建公式，未经检验。代数上残差 = −ln(E/P) + (1−b)*ln(FwdROE) − 行业效应，和 E/P 一起放进 2-of-3 等于同一票投两次；一次性利润通过 FwdEPS 同时抬高两者。因此移出家族只作 challenger：样本外跑赢 val_pbr 后才考虑转回。"
 
   - id: val_fwd_ep
     family: relative_value
@@ -111,11 +111,11 @@ metrics:
     stale_on_free: false
     unlocks_with: null
     sector_rules: "跨行业不可比：PBR<1 占比纸 91%、石油 88%、电气燃气 85%，情报通信 9%。"
-    status: display
-    planned_status: display
+    status: score
+    planned_status: score
     evidence_strength: strong
-    evidence: "日本最稳健的横截面变量之一：G2-01、G2-02；Walkshäusl 2020 亚太回归 BM 斜率 0.386、t=6.0（2000-2018，日本未单列，已读全文）https://epub.uni-regensburg.de/44019 。已减弱：G2-04 日本 HML 2010-2025 约 2.8%/年、t≈1；MSCI 显示 2010s 差距很小；Ross 2025 指出部分溢价来自僵尸股。实测 lnPBR 对 FwdROE 的截面 R2：Prime 0.54（含行业 0.62）。"
-    why: "外部证据最多，但原始排序大半在选低 ROE 公司（前 30% 名单 44% 的 FwdROE<5%）。作为残差的输入和对照基准保留：若评估工具显示残差跑不赢原始 B/M，就应换回它。三份评估中研究证据一方主张打分，另两方主张只作输入，此处取后者并以对照检验收尾。"
+    evidence: "日本最稳健的横截面变量之一：G2-01、G2-02；Walkshäusl 2020 亚太回归 BM 斜率 0.386、t=6.0（2000-2018，日本未单列，已读全文）https://epub.uni-regensburg.de/44019 。已减弱：G2-04 日本 HML 2010-2025 约 2.8%/年、t≈1；MSCI 显示 2010s 差距很小；Ross 2025 指出部分溢价来自僵尸股。实测 lnPBR 对 FwdROE 的截面 R2：Prime 0.54（含行业 0.62）；核心池行业内秩相关 B/M 与 E/P 0.45、与现金流收益率 0.41，残差与 E/P 0.85。"
+    why: "外部证据最多。单独排序会大半选到低 ROE 公司（前 30% 名单 44% 的 FwdROE<5%），放进 2-of-3 后不再如此：2026-08-14 核心池非金融非 Growth 1625 只，本规则命中 222 只，其中 FwdROE<5% 占 15.8%，基准 12.9%；旧规则（残差、E/P、现金流）命中 283 只，占 5.7%。这次转入是为修正重复计票，不是收益检验的结果；低 ROE 占比的取舍列在评估文档第 11 节。"
 
   - id: val_pbr_lt1_flag
     family: relative_value
@@ -1912,15 +1912,15 @@ families:
   relative_value:
     name_zh: "相对估值"
     question_zh: "考虑赚钱能力和同业之后，它便宜吗？"
-    metrics: [val_pbr_roe_residual, val_fwd_ep, val_ocf_yield]
+    metrics: [val_pbr, val_fwd_ep, val_ocf_yield]
     planned_metrics: [val_self_pbr_pct]
-    benchmark_metric: val_pbr
+    challenger_metric: val_pbr_roe_residual
     absence_means: unknown
     threshold:
       min_known: 2
       min_hits: 2
       hit_rules:
-        - {metric: val_pbr_roe_residual, rule: peer_best_pct, value: 0.30}
+        - {metric: val_pbr, rule: peer_best_pct, value: 0.30}
         - {metric: val_fwd_ep, rule: peer_best_pct, value: 0.30, unless_gate: gate_one_off}
         - {metric: val_ocf_yield, rule: peer_best_pct, value: 0.30}
     fail_rule: null
@@ -1928,7 +1928,7 @@ families:
       known_share: {Prime: 0.94, Standard: 0.90, Growth: 0.15}
       hits_all: 679
       hits_liquid_core: 317
-    independence_note: "所选的对数口径残差与 E/P 秩相关 0.77，数学上相关，因此要求 2 项一起命中只是提高可靠性，不算两份证据。现金流收益率回填后是相对独立的第三条腿。Growth 不计残差，读取时只有 15% 的公司同时有 E/P 和现金流，暂时算不出。"
+    independence_note: "三条腿的行业内秩相关（核心池）：B/M 与 E/P 0.45，B/M 与现金流 0.41，E/P 与现金流约 0.35。残差移出前它与 E/P 为 0.85（Prime 全体 0.91），旧规则 8 成命中同时靠残差和 E/P，现金流不是必要条件。2-of-3 仍是一份证据。"
     evidence_summary: "价值是日本证据最多的方向（moderate 到 strong），但 2010 年后单独回报明显变弱，所以不单独成篮：见 B1 的确认条件。"
 
   shareholder_yield:
@@ -2126,7 +2126,7 @@ cyclical_sectors: [海運業, 鉄鋼, 非鉄金属, 化学, パルプ・紙, 石
 sector_overrides:
   銀行業:
     family_changes:
-      relative_value: {drop: [val_ocf_yield], note: "残差在银行内单独回归；E/P 用 FNP"}
+      relative_value: {drop: [val_ocf_yield], note: "E/P 用 FNP"}
       business_quality: {inactive: true}
       guidance_change: {use_basis: "FOdP、FNP 代替 FOP"}
     gates_off: [gate_sector_equity, gate_distress]
@@ -2140,7 +2140,7 @@ sector_overrides:
     traps_zh: "OP 64% 为空、FOP 71% 为空、Sales 22% 为空。通用指标不适用，应看 EV 或修正利润，不进自动评分。"
   証券･商品先物取引業:
     family_changes:
-      relative_value: {drop: [val_fwd_ep, val_ocf_yield], use_basis: "FwdROE 只有 27%，残差改用 ROE（TTM）", min_known: 1, min_hits: 1}
+      relative_value: {drop: [val_ocf_yield], use_basis: "FwdEPS 只有 27%，val_fwd_ep 走 TTM 回退"}
       business_quality: {inactive: true}
       guidance_change: {inactive: true}
     gates_off: [gate_sector_equity, gate_distress]
@@ -2228,7 +2228,7 @@ sector_overrides:
 market_overrides:
   Growth:
     family_changes:
-      relative_value: {drop: [val_pbr_roe_residual], note: "ROE 对 PBR 的解释力太低，只展示；读取时只有 15% 的公司能同时有 E/P 与现金流"}
+      relative_value: {note: "家族仍可算，但 B1 在 Growth 不启用（excluded_markets）；ROE 对 PBR 的解释力太低，残差不算"}
       shareholder_yield: {inactive: true, note: "预告零分红 58%"}
     traps_zh: "PBR<1 只占 7%，27% 无预想，核心池只有 161 只。估值逻辑走不通时不要硬套。"
 
