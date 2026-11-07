@@ -1,0 +1,16 @@
+# 新闻标题 RSS 列表（规划文档 3.2、4.7、10.5、19.1 节）。列表来自 https://news.yahoo.co.jp/rss（2026-11-07 核实）。
+# 条款：Yahoo!ニュース RSS 与 PR TIMES RSS 仅限个人利用，禁止再配信与公开应用；只存标题、链接与 feed 自带摘要，不抓正文。
+# 频率：每次运行每个 feed 只取一次。tier 见 4.7 节（L2 主流媒体与专业机构，L3 聚合与专业站）。
+# 同一链接出现在多个 feed 时保留排在前面的 feed，所以专门媒体排在聚合 feed 之前。
+feeds:
+  - {name: 日経ビジネス, url: "https://news.yahoo.co.jp/rss/media/business/all.xml", tier: L2, source: yahoo_media_business}
+  - {name: 東洋経済オンライン, url: "https://news.yahoo.co.jp/rss/media/toyo/all.xml", tier: L2, source: yahoo_media_toyo}
+  - {name: 会社四季報オンライン, url: "https://news.yahoo.co.jp/rss/media/shikihoz/all.xml", tier: L2, source: yahoo_media_shikihoz}
+  - {name: 帝国データバンク, url: "https://news.yahoo.co.jp/rss/media/teikokudb/all.xml", tier: L2, source: yahoo_media_teikokudb}
+  - {name: 東京商工リサーチ, url: "https://news.yahoo.co.jp/rss/media/biz_shoko/all.xml", tier: L2, source: yahoo_media_biz_shoko}
+  - {name: 日刊工業新聞, url: "https://news.yahoo.co.jp/rss/media/nkogyo/all.xml", tier: L2, source: yahoo_media_nkogyo}
+  - {name: ダイヤモンド・オンライン, url: "https://news.yahoo.co.jp/rss/media/diamond/all.xml", tier: L2, source: yahoo_media_diamond}
+  - {name: みんかぶマガジン, url: "https://news.yahoo.co.jp/rss/media/minkabu/all.xml", tier: L3, source: yahoo_media_minkabu}
+  - {name: Yahoo!ニュース トピックス 経済, url: "https://news.yahoo.co.jp/rss/topics/business.xml", tier: L3, source: yahoo_topics_business}
+  - {name: Yahoo!ニュース 経済, url: "https://news.yahoo.co.jp/rss/categories/business.xml", tier: L3, source: yahoo_category_business}
+  - {name: PR TIMES, url: "https://prtimes.jp/index.rdf", tier: L3, source: prtimes}

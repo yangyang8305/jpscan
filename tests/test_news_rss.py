@@ -142,3 +142,94 @@ def test_longest_alias_wins_and_masks_shorter():
     ]))
     assert m.match("架空工業機械が増配") == ["99020"]
     assert m.match("架空工業が増配") == ["99010"]
+
+
+# ---------- RSS 解析（feed 内容全部虚构，格式与真实 feed 相同） ----------
+YAHOO_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<rss version="2.0"><channel><title>架空 - Yahoo!ニュース</title>
+<item><title>架空自動車が上方修正(架空新聞)</title>
+<link>https://news.example.jp/articles/aaa?source=rss</link>
+<pubDate>Fri, 30 Oct 2026 15:30:00 GMT</pubDate>
+<description>架空自動車は&lt;b&gt;本日&lt;/b&gt;、通期予想を  引き上げた。</description></item>
+<item><title>無関係な話題(モックパーツ)</title>
+<link>https://news.example.jp/articles/bbb?source=rss</link>
+<pubDate>Sat, 31 Oct 2026 01:00:00 GMT</pubDate></item>
+<item><title>日付なしの記事</title><link>https://news.example.jp/articles/ccc?source=rss</link></item>
+<item><title></title><link>https://news.example.jp/articles/ddd?source=rss</link><pubDate>Sat, 31 Oct 2026 01:00:00 GMT</pubDate></item>
+</channel></rss>""".encode("utf-8")
+
+PRTIMES_RDF = """<?xml version="1.0" encoding="UTF-8" ?>
+<rdf:RDF xml:language="ja" xmlns="http://purl.org/rss/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/"
+ xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<channel rdf:about="https://prtimes.example.jp/index.rdf"><title>PR</title><link>https://prtimes.example.jp</link><description>d</description></channel>
+<item rdf:about="https://prtimes.example.jp/p/1.html"><title>新製品を発売しました</title>
+<link>https://prtimes.example.jp/p/1.html</link><description>[モックパーツ]
+株式会社モックパーツは新製品を発売。</description><dc:corp>モックパーツ</dc:corp><dc:date>2026-11-01T09:15:00+09:00</dc:date></item>
+<item rdf:about="https://prtimes.example.jp/p/2.html"><title>架空自動車と協業</title>
+<link>https://prtimes.example.jp/p/2.html</link><dc:corp>非上場スタートアップ</dc:corp><dc:date>2026-11-01T10:00:00+09:00</dc:date></item>
+</rdf:RDF>""".encode("utf-8")
+
+FEED_Y = {"name": "架空新聞", "url": "https://news.example.jp/rss/a.xml", "tier": "L2", "source": "yahoo_media_a"}
+FEED_C = {"name": "聚合", "url": "https://news.example.jp/rss/c.xml", "tier": "L3", "source": "yahoo_category_c"}
+FEED_P = {"name": "PR", "url": "https://prtimes.example.jp/index.rdf", "tier": "L3", "source": "prtimes"}
+
+
+def test_news_id_is_first_24_hex_of_sha256():
+    import hashlib
+
+    from jpscan.connectors.news_rss import news_id
+    link = "https://news.example.jp/articles/aaa?source=rss"
+    assert news_id(link) == hashlib.sha256(link.encode()).hexdigest()[:24]
+    assert len(news_id(link)) == 24
+
+
+def test_title_for_matching_strips_media_suffix_only():
+    from jpscan.connectors.news_rss import title_for_matching
+    assert title_for_matching("架空自動車が上方修正(架空新聞)") == "架空自動車が上方修正"
+    assert title_for_matching("某社が上方修正（9902）") == "某社が上方修正（9902）"
+    assert title_for_matching("普通の見出し") == "普通の見出し"
+
+
+def test_parse_yahoo_feed(matcher):
+    from jpscan.connectors.news_rss import COLUMNS, parse_feed
+    df, n_undated = parse_feed(YAHOO_XML, FEED_Y, matcher)
+    assert n_undated == 1
+    assert list(df.columns) == COLUMNS
+    assert len(df) == 2
+    r = df.iloc[0]
+    # 15:30 GMT → 次日 00:30 JST，发布日按 JST
+    assert r["published_at"] == "2026-10-31T00:30:00+09:00"
+    assert r["published_date"] == date(2026, 10, 31)
+    assert r["tier"] == "L2" and r["source"] == "yahoo_media_a"
+    assert r["summary"] == "架空自動車は 本日 、通期予想を 引き上げた。"
+    assert r["matched_codes"] == "99010" and r["match_method"] == "alias"
+    assert r["category"] == ""
+    # 标题末尾的媒体名不参与匹配；feed 没给摘要就留空
+    assert df.iloc[1]["matched_codes"] == "" and df.iloc[1]["match_method"] == ""
+    assert df.iloc[1]["summary"] == ""
+
+
+def test_parse_prtimes_rdf_uses_corp_field(matcher):
+    from jpscan.connectors.news_rss import parse_feed
+    df, _ = parse_feed(PRTIMES_RDF, FEED_P, matcher)
+    assert len(df) == 2
+    assert df.iloc[0]["published_at"] == "2026-11-01T09:15:00+09:00"
+    assert df.iloc[0]["matched_codes"] == "99020" and df.iloc[0]["match_method"] == "corp"
+    assert df.iloc[1]["matched_codes"] == "99010" and df.iloc[1]["match_method"] == "alias"
+
+
+def test_parse_feed_without_matcher():
+    from jpscan.connectors.news_rss import parse_feed
+    df, _ = parse_feed(YAHOO_XML, FEED_Y, None)
+    assert (df["matched_codes"] == "").all()
+
+
+def test_config_feeds_are_well_formed():
+    from pathlib import Path
+
+    from jpscan.connectors.news_rss import load_feeds
+    feeds = load_feeds(Path(__file__).resolve().parents[1] / "config" / "news_feeds.yaml")
+    assert len(feeds) >= 5
+    assert len({f["source"] for f in feeds}) == len(feeds)
+    assert len({f["url"] for f in feeds}) == len(feeds)
+    assert all(f["tier"] in {"L2", "L3"} and f["url"].startswith("https://") and f["name"] for f in feeds)
