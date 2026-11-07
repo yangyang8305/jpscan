@@ -1438,3 +1438,446 @@ metrics:
     evidence: "多市场研究摘要称做空有横截面预测力，日本结果未单独看到。"
     why: "不应把高做空直接解读为利好或利空。"
 
+  # ---------- 风险门槛 ----------
+  - id: gate_regulatory_red_flags
+    family: risk_gates
+    aliases: [Q11, RED_FLAGS, X02, X03, X04, X05, X07, X10]
+    name_zh: "制度性红旗"
+    plain_zh: "被交易所列入监管名单、资不抵债、持续经营存疑、会计出问题，直接排除或标红。"
+    purpose: exclusion_filter
+    direction: flag
+    formula: "硬排除：jpx_supervision.is_current；jpx_improvement_period 当前在册；Eq<=0。标红：RetroRst=true；SchDate 已过但无短信。需文本（X03-X05）：disclosures 的継続企業注記、不適切会計、第三者委員会、監査意見。"
+    data_needed: "staging.jpx_supervision, jpx_improvement_period；financial_statements.Eq, RetroRst, ChgNoASRev；earnings_calendar；staging.disclosures"
+    available_on_free_plan: true
+    free_plan_note: "结构化部分可用：Eq<=0 有 11 家，当前監理整理 43 条，改善期间 60 条。MatChgSub 全部为空，不可作旗标。文本项 TDnet 接入前算未检查，不得显示为通过。JPX 文件比 J-Quants Free 新，两者要分开标日期。"
+    stale_on_free: false
+    unlocks_with: "文本项：TDnet 每日采集、EDINET"
+    sector_rules: "ChgNoASRev=true 未必是坏事，只标记。"
+    status: gate
+    planned_status: gate
+    evidence_strength: strong
+    evidence: "这是制度事实（G1 系列），不是统计预测。"
+    why: "成本低、误判代价高，必须硬排除。"
+
+  - id: gate_distress
+    family: risk_gates
+    aliases: [X07, distress]
+    name_zh: "财务困境门槛"
+    plain_zh: "持续亏损又持续失血的公司先降级，避免永久损失。"
+    purpose: exclusion_filter
+    direction: flag
+    formula: "降级：最近两个 FY 均 OP<0 且 CFO<0；或 ShEq/TA 处于行业内最低 10%。不实现 Altman Z（Free 缺留存收益、营运资本，算出来会错）。"
+    data_needed: "financial_statements.OP, CFO, ShEq, TA"
+    available_on_free_plan: true
+    free_plan_note: "ShEq/TA 现在可算；两年条件须等回填。"
+    stale_on_free: false
+    unlocks_with: "回填到 2025-05"
+    sector_rules: "金融业跳过。行业内比较，不用全局固定线。"
+    status: gate
+    planned_status: gate
+    evidence_strength: weak
+    evidence: "Altman Z、Ohlson O 的日本回报检验未找到。Bradrania 等 2023 提示异象多集中在低质量股（未单列日本）。门槛出于风险控制，不是收益证据。"
+    why: "目的是避免永久损失，不是选 alpha。10% 为先验。"
+
+  - id: gate_zombie
+    family: risk_gates
+    aliases: [zombie]
+    name_zh: "僵尸企业过滤"
+    plain_zh: "连续多年赚的钱不够付利息、靠银行续命的公司。"
+    purpose: exclusion_filter
+    direction: flag
+    formula: "OP/支払利息<1 持续 3 年且上市>=10 年（BIS 定义）。"
+    data_needed: "支払利息、有利子負債：EDINET 或 Premium"
+    available_on_free_plan: false
+    free_plan_note: "Free 无利息和负债，算不出，现阶段显示未检查。"
+    stale_on_free: false
+    unlocks_with: "EDINET 財務諸表（10 年，免费）"
+    sector_rules: "金融业不适用。"
+    status: display
+    planned_status: gate
+    evidence_strength: moderate
+    evidence: "Ross 2025（工作论文，相关段落已读，1979-2024）：剔除僵尸后日本动量溢价由 0.91% 升到 2.99%/年，价值溢价下降到接近全球水平 https://sharonyross-com.pages.dev/SharonRoss_CreditDistortionsJapaneseMomentum.pdf 。Ross 用利率差定义，BIS 用 ICR，定义不同。"
+    why: "草案没有这项。它解释了部分低 PBR 陷阱，接入 EDINET 后优先实现。不用 OP/TA 粗代理去硬排除。"
+
+  - id: gate_dilution
+    family: risk_gates
+    aliases: [X06, S04, DILUTION_EVENT, qual_net_issuance_gate]
+    name_zh: "稀释融资门槛"
+    plain_zh: "公司有没有大量增发或发行会持续压低股价的 MS 权证。"
+    purpose: exclusion_filter
+    direction: flag
+    formula: "硬排除：MS 权证未行使完（disclosures）。降级：12 个月内公募增资或 CB；还原分割后 ShOutFY−TrShFY 同比增加>=10%。"
+    data_needed: "staging.disclosures；financial_statements.ShOutFY, TrShFY；prices_daily.AdjFactor"
+    available_on_free_plan: true
+    free_plan_note: "只有股数部分，须回填到上年同期，事后才看到，且分不清行使、转股和分割。MS 权证现阶段算未检查。"
+    stale_on_free: false
+    unlocks_with: "TDnet 每日采集、EDINET 临时报告"
+    sector_rules: "银行增资读法不同。"
+    status: gate
+    planned_status: gate
+    evidence_strength: moderate
+    evidence: "G2-26（二手）：公募增资 (−10,+10) 约 −8%；G2-27：MS 权证长期下跌，平均稀释 13.3%。连续排序证据弱：Blackburn & Cakici（摘要）称净增发在日本不预测收益。"
+    why: "证据支持把大额稀释作排除条件，不支持把小幅变化作连续评分。"
+
+  - id: gate_debt_coverage
+    family: risk_gates
+    aliases: [Q5, Q6, DEBT_COVERAGE]
+    name_zh: "偿债能力"
+    plain_zh: "利润和现金够不够还债付息，尤其是在利率上升时。"
+    purpose: quality_risk
+    direction: flag
+    formula: "(debt − CashEq)/EBITDA；OP_ttm/interest；金融业除外。"
+    data_needed: "有利子負債、折旧、支払利息"
+    available_on_free_plan: false
+    free_plan_note: "Free 没有字段，文档 F4 现在写的条件判定不了。未解锁前只用 gate_sector_equity 代理，并在报告中写明。"
+    stale_on_free: false
+    unlocks_with: "EDINET 或 J-Quants Premium"
+    sector_rules: "金融业不适用。"
+    status: display
+    planned_status: gate
+    evidence_strength: weak
+    evidence: "无日本专门收益证据，作用是防破产。"
+    why: "这是生存能力判断的关键一项，EDINET 到位后优先加入。"
+
+  - id: gate_sector_equity
+    family: risk_gates
+    aliases: [Q4, SECTOR_EQUITY_GATE]
+    name_zh: "分行业财务安全门槛"
+    plain_zh: "判断负债是否危险时要和同行比，不能全市场一条线。"
+    purpose: quality_risk
+    direction: flag
+    formula: "EqAR 处于行业内最低 10% 时降级；不用全局 30% 线。"
+    data_needed: "financial_statements.EqAR；security_master.S33"
+    available_on_free_plan: true
+    free_plan_note: "决算文档填写率 99-100%；修订文档为空，须向前延续。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "金融业排除此项。EqAR<30% 的比例：全体 14.8%、不动产 42.5%、电气燃气 40.7%、石油 50%、航空 40%。"
+    status: gate
+    planned_status: gate
+    evidence_strength: moderate
+    evidence: "H5 的去劣立场有文献支持；具体线无证据。实测见 sector_rules：全局门槛主要在淘汰行业特征。"
+    why: "替代 Q4 的 30% 全局门槛和 value.trap 的 20% 线。"
+
+  - id: gate_one_off
+    family: risk_gates
+    aliases: [N4, ONE_OFF_FLAG]
+    name_zh: "一次性损益标记"
+    plain_zh: "如果预计净利润接近甚至超过主业利润，低 PER 很可能是卖资产之类的一次性收益造成的假便宜。"
+    purpose: exclusion_filter
+    direction: flag
+    formula: "FNP/FOdP>=0.85 或 FNP/FOP>=1.0（IFRS 无 FOdP）：val_fwd_ep 不算命中并标黄；FNP/FOdP<=0.4 只标记（可能是一次性亏损压低利润）。"
+    data_needed: "financial_statements.FNP, FOdP, FOP"
+    available_on_free_plan: true
+    free_plan_note: "覆盖受回填限制，有文档者 Prime 82%、Standard 84%、Growth 66%。"
+    stale_on_free: false
+    unlocks_with: "明细：TDnet 文本"
+    sector_rules: "投资收益占比高的行业要豁免或看同业：海运 FNP/FOP 约 1.59，商社 NP/OP 约 1.42。银行无 FOP，用 FOdP。"
+    status: gate
+    planned_status: gate
+    evidence_strength: weak
+    evidence: "自己测出的现象，无日本专项文献。FNP/FOdP>=0.85 在 FwdPER<10 组占 16.4%，其余组 9.3%；FNP/FOP>1 全样本 7.5%，FwdPER<10 组 11.3%。"
+    why: "成本为零，能直接净化低 PER 名单。阈值为分布取值，未做收益检验。"
+
+  - id: gate_div_cover
+    family: risk_gates
+    aliases: [DIV_COVER]
+    name_zh: "分红覆盖度"
+    plain_zh: "公司预计的利润够不够付它承诺的分红。"
+    purpose: quality_risk
+    direction: flag
+    formula: "FDivAnn/FEPS>1 且利润预想下降时 yield_dividend 不算命中；FEPS<=0 且仍有分红单独标记；有 DOE 或累进政策时展示说明。"
+    data_needed: "financial_statements.FDivAnn, FEPS"
+    available_on_free_plan: true
+    free_plan_note: "FEPS>0 且有分红 n=2352：派息率>100% 占 4.7%。"
+    stale_on_free: false
+    unlocks_with: "DOE、累进政策：TDnet 文本"
+    sector_rules: "J-REIT 不在宇宙内。"
+    status: gate
+    planned_status: gate
+    evidence_strength: moderate
+    evidence: "股息率前 10%（>=4.6%）的 235 家中 15% 派息率>100%、37%>70%。未检验后续减配率。G2-24 给出増配的方向证据。"
+    why: "高股息榜明显富集高派息率股票，单看股息率容易选到减配候选。"
+
+  - id: gate_peak_earnings
+    family: risk_gates
+    aliases: [PEAK_EARNINGS_RATIO]
+    name_zh: "周期顶点利润度"
+    plain_zh: "今年的利润相对过去五年平均高出多少，太高时低 PER 很可能只是周期顶部的错觉。"
+    purpose: quality_risk
+    direction: flag
+    formula: "最新 NP / 近 5 年 NP 均值，或 ROE − 5 年平均 ROE；限周期行业（见 sector_overrides）。只降级，不排除。"
+    data_needed: "有報 主要な経営指標等の推移（5 年）"
+    available_on_free_plan: false
+    free_plan_note: "Free 2 年窗口不足以判断，现阶段周期行业标注「周期位置未检查」。"
+    stale_on_free: false
+    unlocks_with: "EDINET 有報（一份含 5 年，未实测）或 J-Quants Light 以上"
+    sector_rules: "只用于海运、钢铁、非铁、化学、纸、石油、矿业及半导体相关。"
+    status: display
+    planned_status: gate
+    evidence_strength: weak
+    evidence: "实务常识，未找到日本横截面收益证据。海运 FwdPER<10 占 36%，单期无法证明处于顶部。"
+    why: "自动筛选最容易踩的周期陷阱。"
+
+  - id: gate_tangible_book
+    family: risk_gates
+    aliases: [TANGIBLE_BOOK_QUALITY]
+    name_zh: "净资产质量"
+    plain_zh: "账面净资产里有多少其实是商誉和递延税资产这类未必变得了现的东西。"
+    purpose: quality_risk
+    direction: flag
+    formula: "(のれん+無形+繰延税金資産純額)/ShEq>0.5 时估值分降级。"
+    data_needed: "BS 明细"
+    available_on_free_plan: false
+    free_plan_note: "Free 无明细，现阶段显示未检查。"
+    stale_on_free: false
+    unlocks_with: "EDINET 或 TDnet 短信 XBRL"
+    sector_rules: "并购型公司和 IFRS 下不摊销商誉的公司尤其需要查。"
+    status: display
+    planned_status: gate
+    evidence_strength: weak
+    evidence: "会计逻辑，未找到日本收益证据。阈值 50% 是先验。"
+    why: "低 PBR 的前提是账面可信。"
+
+  - id: gate_inorganic
+    family: risk_gates
+    aliases: [INORGANIC_FLAG]
+    name_zh: "增长可比性标记"
+    plain_zh: "增长是公司自己做出来的，还是并购或决算期变更造成的账面变化。"
+    purpose: quality_risk
+    direction: flag
+    formula: "SigChgInC=true 或 fy_months≠12 时，同比增长与 F-Score 的差分项降级并提示人工查。"
+    data_needed: "financial_statements.SigChgInC, fy_months"
+    available_on_free_plan: true
+    free_plan_note: "SigChgInC=true 602 条（非空约 20%），fy_months≠12 有 55 条。SigChgInC 含义由字段名推断，需对照 API 文档确认。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "无。"
+    status: gate
+    planned_status: gate
+    evidence_strength: weak
+    evidence: "无收益证据，属口径防错。"
+    why: "Free 已有的低成本防线，文档尚未使用。"
+
+  - id: gate_disclosure_delay
+    family: risk_gates
+    aliases: [N12]
+    name_zh: "披露延迟红旗"
+    plain_zh: "财报比平时或比规定晚出来，常是公司出了问题的信号。"
+    purpose: exclusion_filter
+    direction: flag
+    formula: "DiscDate − CurPerEn>45 日；与 earnings_calendar.SchDate 差异。旧期间补报（>100 日）单独识别，不得覆盖最新状态。"
+    data_needed: "financial_statements.DiscDate, CurPerEn；earnings_calendar.SchDate"
+    available_on_free_plan: true
+    free_plan_note: "季度文档 lag>45 日只有 Prime 0.7%、Standard 0.5%、Growth 1.0%；预定日与实际日 296 对中 95.6% 相同。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "无。"
+    status: gate
+    planned_status: gate
+    evidence_strength: weak
+    evidence: "日本专项证据未找到。"
+    why: "成本低、事件稀少。只作人工复核红旗，不做自动硬排除。"
+
+  - id: gate_sector_route
+    family: risk_gates
+    aliases: [SECTOR_ROUTE, S06]
+    name_zh: "行业口径路由"
+    plain_zh: "不同行业用不同的尺子，银行不看营业利润，开发商不看固定的自有资本比率。"
+    purpose: exclusion_filter
+    direction: none
+    formula: "按 security_master.S33Nm 与 gaap 读取 sector_overrides；字段为空时不得填 0 或行业中位。"
+    data_needed: "security_master.S33Nm；financial_statements.gaap"
+    available_on_free_plan: true
+    free_plan_note: "字符串匹配要用半角中点：証券･商品先物取引業、電気･ガス業、情報･通信業。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "见 sector_overrides。"
+    status: gate
+    planned_status: gate
+    evidence_strength: moderate
+    evidence: "实测字段缺失：银行 OP、FOP 100% 为空；保险 OP 64%、FOP 71%；五大商社 FOP 5/5 为空；证券 FEPS 81% 为空；IFRS FOdP 100% 为空。无收益证据，属口径防错。"
+    why: "不路由的话，成长和质量维度会静默漏掉整个行业，或用错误口径排序。"
+
+  - id: gate_guidance_absent
+    family: risk_gates
+    aliases: [GUIDANCE_ABSENT, N13]
+    name_zh: "未公布指引处理"
+    plain_zh: "公司没给盈利目标时，要换一套算法并明确标注，不能当坏事也不能当 0。"
+    purpose: exclusion_filter
+    direction: flag
+    formula: "FEPS 或 FOP 为空（非 FY 行）时，依赖预想的指标置未知；改用 TTM 并标低置信。"
+    data_needed: "financial_statements.FEPS, FOP"
+    available_on_free_plan: true
+    free_plan_note: "FEPS 空值全体 13.5%，证券 81%，水产 36%，医药 31%，情报通信 21%，Growth 27%，Prime 8.7%。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "证券业走 PBR 对 TTM ROE 的路径。"
+    status: gate
+    planned_status: gate
+    evidence_strength: moderate
+    evidence: "实测见 free_plan_note；无收益证据。"
+    why: "空值比例随行业变化很大，错误填补会让行业排序产生系统偏差。"
+
+  # ---------- 背景与风险度量 ----------
+  - id: ctx_non_op_reliance
+    family: context
+    aliases: [NON_OP_RELIANCE]
+    name_zh: "营业外依赖度"
+    plain_zh: "公司利润有多少不是主业赚的，而来自联营公司或汇兑收益。"
+    purpose: quality_risk
+    direction: none
+    formula: "(OdP − OP)/|OP|，按行业比较。"
+    data_needed: "financial_statements.OdP, OP, NP"
+    available_on_free_plan: true
+    free_plan_note: "IFRS 无 OdP。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "海运、商社改用 OdP 或 NP 作主口径。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "海运 OdP/OP 中位 1.23；五大商社有 OP 者 NP/OP 中位 1.42（n 很小）。"
+    why: "解释项，不宜直接打分。"
+
+  - id: ctx_gaap_compare
+    family: context
+    aliases: [GAAP_COMPARE]
+    name_zh: "会计准则可比性"
+    plain_zh: "不同会计准则下的利润不能直接比大小。"
+    purpose: quality_risk
+    direction: none
+    formula: "显示 gaap；跨准则比较打折扣；2027-04 后标记新租赁准则断点。"
+    data_needed: "financial_statements.gaap"
+    available_on_free_plan: true
+    free_plan_note: "IFRS 286 家（医药约 25%、运输机械约 22%）。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "并购型公司 JGAAP 与 IFRS 利润不可比。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "ASBJ 第 34 号自 2027-04-01 后开始的年度强制适用（二手）https://kpmg.com/jp/ja/home/insights/2025/11/basic-lease-202511.html 。"
+    why: "新租赁准则会改变 EqAR 和 EBITDA，影响历史分位。"
+
+  - id: risk_low_vol_beta
+    family: context
+    aliases: [T6, T7]
+    name_zh: "波动率与 β"
+    plain_zh: "这只股票波动多大、跟随大盘有多紧。"
+    purpose: quality_risk
+    direction: none
+    formula: "std(日收益,60)*√250；ATR(14)/C；250 日对市场回归斜率（Free 用自制市场）。"
+    data_needed: "prices_daily"
+    available_on_free_plan: true
+    free_plan_note: "价格回填后可算。"
+    stale_on_free: false
+    unlocks_with: "TOPIX 基准：J-Quants Light"
+    sector_rules: "无。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "结论不一：G2-33；Sehgal 等 2022 日本 BAB 不显著（摘要）https://ideas.repec.org/a/eee/pacfin/v75y2022ics0927538x22001196.html 。"
+    why: "不作选股 alpha，继续用于仓位和止损（风险用途不需要收益证据）。"
+
+  - id: risk_max_lottery
+    family: context
+    aliases: [N11, IVOL, MAX]
+    name_zh: "特质波动与彩票特征"
+    plain_zh: "最近出现过暴涨、自身波动很大的投机股，之后往往表现差。"
+    purpose: quality_risk
+    direction: lower_better
+    formula: "60-250 日收益对自制市场回归的残差标准差；过去 21 日最大单日收益（前 5 日均值）。"
+    data_needed: "prices_daily"
+    available_on_free_plan: true
+    free_plan_note: "价格回填后可算。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "无。"
+    status: display
+    planned_status: gate
+    evidence_strength: weak
+    evidence: "Ang 等 2009 称 G7 含日本显著为负（只核实摘要）https://www.nber.org/papers/w13739 ；日本单独证据薄，学位论文方向不清。"
+    why: "数据一方主张作投机过滤，研究一方认为证据不够。列入验证清单，通过后再作门。"
+
+  - id: text_mdna_tone
+    family: context
+    aliases: [H7]
+    name_zh: "文本情绪"
+    plain_zh: "公司文件或新闻读起来乐观还是悲观。"
+    purpose: quality_risk
+    direction: none
+    formula: "LLM 或词典情绪分；只作过度乐观警示。"
+    data_needed: "EDINET 有報、TDnet 文本；LLM"
+    available_on_free_plan: false
+    free_plan_note: "没有文本来源。"
+    stale_on_free: false
+    unlocks_with: "EDINET、TDnet 与 AI 层"
+    sector_rules: "无。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "G2-35：MD&A 情绪与后续收益负相关；G2-36；G2-37：方向准确率约 0.53。都很新，样本外时间短。"
+    why: "不作正向信号。AI 更应做事件抽取和数值核对。"
+
+  # ---------- 可执行性 ----------
+  - id: liq_gate
+    family: execution
+    aliases: [L1, LIQUIDITY_CAP, X08]
+    name_zh: "流动性门槛"
+    plain_zh: "这只股票每天成交额够不够你买卖而不明显影响价格。"
+    purpose: liquidity
+    direction: flag
+    formula: "20 日 mean(Va) 与 valuation_daily.MktCap*1e6 对照 params.liquidity；单票上限 = adv20*5%*5 日；展示 Amihud = |ret|/Va 与零成交日比例。"
+    data_needed: "prices_daily.Va；valuation_daily.MktCap"
+    available_on_free_plan: true
+    free_plan_note: "覆盖 100%。当日 core（ADV>=5000 万円且市值>=50 億円）1920 只：Prime 1455、Standard 304、Growth 161。"
+    stale_on_free: false
+    unlocks_with: null
+    sector_rules: "Standard 统计上便宜的股票大量过不了 core：PBR<1 占 53%，但 80% 过不了。"
+    status: gate
+    planned_status: gate
+    evidence_strength: strong
+    evidence: "这是可执行性约束，不是 alpha：G2-32 日本非流动性溢价偏小；KAKEN 20K01746 反转集中在超小型股。具体数值来自资金规模计算，没有实证。"
+    why: "没有它，所有反转和小盘回测都会被高估。门槛应按用户实际资金设置。"
+
+  - id: liq_float_borrow
+    family: execution
+    aliases: [L2]
+    name_zh: "流通盘与融券可得性"
+    plain_zh: "市场上真正流通的股份多不多，以及是否能被融券做空。"
+    purpose: liquidity
+    direction: none
+    formula: "index_topix_weights 权重/MktCap 的相对值；security_master.Mrgn（2=貸借，1=信用）；ScaleCat。"
+    data_needed: "staging.index_topix_weights；security_master.Mrgn"
+    available_on_free_plan: true
+    free_plan_note: "权重只覆盖 Prime 97%、Standard 8%、Growth 0.2%。浮動株比率字段 Free 不存在，文档 low_float_flag 无法按原定义计算，缺失时显示未知。"
+    stale_on_free: false
+    unlocks_with: "全市场真实浮动股：EDINET 大股东估算（未实测）"
+    sector_rules: "无。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "Mrgn 作错误定价代理未找到日本证据。"
+    why: "低成本补上流通盘标签。"
+
+  - id: size_neglect
+    family: execution
+    aliases: [H8]
+    name_zh: "规模与被忽视程度"
+    plain_zh: "市值很小、几乎没有分析师覆盖的股票是否定价更离谱。"
+    purpose: mispricing_oversold
+    direction: none
+    formula: "ln(MktCap)；分析师覆盖数无合规自动来源。"
+    data_needed: "valuation_daily.MktCap"
+    available_on_free_plan: true
+    free_plan_note: "只有规模部分。"
+    stale_on_free: false
+    unlocks_with: "持股结构代理：EDINET"
+    sector_rules: "无。"
+    status: display
+    planned_status: display
+    evidence_strength: weak
+    evidence: "G2-04：SMB 2013-2025 约 0.5%/年；G2-20；G2-21（描述数字）；MSCI 均等权重 2020s −3.5%/年。覆盖度与后续收益的日本直接研究未找到。"
+    why: "不应给小盘加分。它的价值在于作其他信号的条件。"
+
