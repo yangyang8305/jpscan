@@ -2107,3 +2107,123 @@ buckets:
 
 buckets_measured_note: "以上为 2026-08-14 单日、流动性核心池（1920 只）内、扣除可用硬门槛（106 只命中，其中核心池 33 只）后的命中数，未用 S17 回退，未扣 soft 门槛中尚不能算的项。重叠：B1 与 B2 35 只，B1 与 B3 8 只，B2 与 B3 6 只。该日处于决算季，事件型数字偏高。这只是规模检查，不是收益证据。"
 
+# ---------- 行业覆盖 ----------
+# key 为 security_master.S33Nm 原文（注意半角中点 ･ 与全角中点 ・ 不同）。
+# family_changes：drop 从家族中去掉的指标；use_basis 字段替换；inactive 整个家族不适用（结果记 unknown，且不计入该行业覆盖率）。
+# 数字为只读实测（2026-07 至 08 的单期），文字未标实测处属制度或实务知识，未逐项核实。
+sector_defaults:
+  small_groups_fallback_to_s17: [鉱業, 空運業, 石油･石炭製品, 海運業, 水産・農林業, 保険業, ゴム製品]
+  note: "这些行业当日不足 20 只，同业分位回退 S17。情報･通信業（603）、サービス業（533）过于混杂，行业内比较的含义也弱。"
+  empty_field_rule: "字段为空时记未知，不得填 0 或行业中位。"
+
+cyclical_sectors: [海運業, 鉄鋼, 非鉄金属, 化学, パルプ・紙, 石油･石炭製品, 鉱業]
+
+sector_overrides:
+  銀行業:
+    family_changes:
+      relative_value: {drop: [val_ocf_yield], note: "残差在银行内单独回归；E/P 用 FNP"}
+      business_quality: {inactive: true}
+      guidance_change: {use_basis: "FOdP、FNP 代替 FOP"}
+    gates_off: [gate_sector_equity, gate_distress]
+    traps_zh: "OP、FOP 100% 为空，EqAR 中位 5%，CFO 约 99% 为空。要看规制资本、信用成本、证券处置收益；满期保有含み损不进净资产，利率上行时账面可能偏高。这些 Free 都没有。"
+  保険業:
+    family_changes:
+      relative_value: {inactive: true}
+      business_quality: {inactive: true}
+      guidance_change: {inactive: true}
+    gates_off: [gate_sector_equity, gate_distress]
+    traps_zh: "OP 64% 为空、FOP 71% 为空、Sales 22% 为空。通用指标不适用，应看 EV 或修正利润，不进自动评分。"
+  証券･商品先物取引業:
+    family_changes:
+      relative_value: {drop: [val_fwd_ep, val_ocf_yield], use_basis: "FwdROE 只有 27%，残差改用 ROE（TTM）", min_known: 1, min_hits: 1}
+      business_quality: {inactive: true}
+      guidance_change: {inactive: true}
+    gates_off: [gate_sector_equity, gate_distress]
+    traps_zh: "FEPS 81% 为空，受行情影响大，PER 不可靠。无指引不是负面。"
+  その他金融業:
+    family_changes:
+      relative_value: {drop: [val_ocf_yield]}
+      business_quality: {inactive: true}
+    gates_off: [gate_sector_equity]
+    traps_zh: "杠杆就是业务本身，EqAR<30% 占 57%。净现金和固定自有资本比率没有意义。"
+  不動産業:
+    family_changes:
+      relative_value: {drop: [val_ocf_yield]}
+      business_quality: {drop: [], note: "F-Score 的 CFO 两项不可靠，只算其余项"}
+    gates_off: []
+    traps_zh: "FwdPER<10 占 56%，EqAR<30% 占 42.5%。低 PER 是常态，购地让 CFO 为负，4Q 集中使进捗率失真。看含み益和利率敏感度。"
+  電気･ガス業:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "PBR<1 占 85%，EqAR<30% 占 41%，约 20% 无 FOP。燃料调整时滞使利润摆动，核电和监管是主要判断点。"
+  空運業:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "约 20% 无 FOP，EqAR<30% 占 40%，只有 5 只，回退 S17。"
+  海運業:
+    family_changes:
+      guidance_change: {use_basis: "OdP、FOdP 代替 OP、FOP"}
+    gates_off: [gate_one_off]
+    traps_zh: "OdP/OP 中位 1.23，FNP/FOP 中位 1.59，FwdPER<10 占 36%。OP 口径失真，低 PER 要先判断周期位置，当前算未检查。"
+  卸売業:
+    family_changes:
+      guidance_change: {use_basis: "FOP 为空的公司（五大商社 5/5）改用 FNP、NP"}
+      business_quality: {note: "OP 为空的公司 qual_op_profitability 记未知"}
+    gates_off: []
+    traps_zh: "五大商社全部 IFRS，FOP 全空，有 OP 者 NP/OP 中位 1.42（n 很小）。注意持分法和资源价格周期，其他卸売公司照常。"
+  鉄鋼:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "PBR<1 占 76%，在库评价损益影响利润，看周期位置。"
+  化学:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "在库评价损益影响利润，看中期利润率。"
+  非鉄金属:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "资源价格带动利润，低 PER 先判断周期位置。"
+  パルプ・紙:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "PBR<1 占 91%，只有行业内比较才有意义。"
+  石油･石炭製品:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "PBR<1 占 88%，EqAR<30% 占 50%，在库评价损益大，只有 9 只。"
+  建設業:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "1Q 进捗率中位只有 18.8%，看受注残和工事损失；应计比率差异大。"
+  機械:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "看受注高，1Q 进度偏低不等于出问题。"
+  情報･通信業:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "PBR<1 只占 9%，行业过于混杂（603 只），FEPS 约 21% 为空。SI 公司看受注残，互联网公司 PBR 意义有限。"
+  サービス業:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "533 只，业务差别大，行业内分位含义弱。"
+  医薬品:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "31% 无预想，25% IFRS，Sales 14% 为空。减损计入营业利润，要看管线和专利。"
+  小売業:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "非 3 月决算多，看月次、租赁和股东优待。优待废止引发的下跌是资金结构变化，不是错杀，须 TDnet 才能分清。"
+  輸送用機器:
+    family_changes: {}
+    gates_off: []
+    traps_zh: "约 22% IFRS，跨准则比较打折扣。"
+
+market_overrides:
+  Growth:
+    family_changes:
+      relative_value: {drop: [val_pbr_roe_residual], note: "ROE 对 PBR 的解释力太低，只展示；读取时只有 15% 的公司能同时有 E/P 与现金流"}
+      shareholder_yield: {inactive: true, note: "预告零分红 58%"}
+    traps_zh: "PBR<1 只占 7%，27% 无预想，核心池只有 161 只。估值逻辑走不通时不要硬套。"
+
